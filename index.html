@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>MapLibre Station Picker (Points + 1/2-mile Buffers)</title>
+    <title>MapLibre Station Picker + 1/2-mile Buffers + TIGERweb/ACS Sidebar</title>
 
     <!-- MapLibre GL JS (CDN) -->
     <link
@@ -12,47 +12,151 @@
     />
     <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 
-    <!-- Turf.js for browser-side buffering -->
+    <!-- Turf.js for browser-side buffering and spatial operations -->
     <script src="https://unpkg.com/@turf/turf@6.5.0/turf.min.js"></script>
 
     <style>
-      body { margin: 0; font-family: system-ui, sans-serif; }
-      #map { height: 70vh; width: 100vw; }
-      #panel { padding: 12px 16px; }
+      :root {
+        --border: #e5e7eb;
+        --muted: #555;
+        --bg: #ffffff;
+        --panel: #f6f8fa;
+      }
+
+      body { margin: 0; font-family: system-ui, sans-serif; background: var(--bg); }
+      #app { display: flex; height: 100vh; width: 100vw; }
+
+      #sidebar {
+        width: 360px;
+        border-right: 1px solid var(--border);
+        padding: 12px 14px;
+        overflow: auto;
+        box-sizing: border-box;
+      }
+
+      #map { flex: 1; }
+
+      h3 { margin: 8px 0 10px; font-size: 16px; }
+      .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+      .muted { color: var(--muted); font-size: 13px; line-height: 1.35; }
+
+      label { display:block; margin: 10px 0; font-size: 13px; }
+      select, button {
+        width: 100%;
+        padding: 8px 10px;
+        margin-top: 6px;
+        box-sizing: border-box;
+        font: inherit;
+      }
+      button { cursor: pointer; }
+
+      .btnRow { display:flex; gap:10px; }
+      .btnRow button { width: 50%; }
+
       #coords {
         white-space: pre;
-        background: #f6f8fa;
-        padding: 12px;
+        background: var(--panel);
+        padding: 10px;
         border-radius: 8px;
         overflow: auto;
+        border: 1px solid var(--border);
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+        font-size: 12px;
       }
-      button { padding: 8px 10px; cursor: pointer; }
-      .row { display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
-      .muted { color: #555; }
+
+      .card {
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 10px;
+        margin-top: 10px;
+        background: #fff;
+      }
+      .kv { font-size: 13px; }
+      .kv b { display:inline-block; min-width: 150px; }
+      #total { font-size: 22px; font-weight: 700; margin-top: 6px; }
+      hr { border: 0; border-top: 1px solid var(--border); margin: 12px 0; }
+      .tiny { font-size: 12px; color: var(--muted); }
     </style>
   </head>
 
   <body>
-    <div id="map"></div>
+    <div id="app">
+      <div id="sidebar">
+        <h3>Stations</h3>
 
-    <div id="panel">
-      <div class="row">
-        <strong>Click the map to add station points</strong>
-        <button id="undo">Delete last point</button>
-        <button id="clear">Clear points</button>
+        <div class="btnRow">
+          <button id="undo">Delete last point</button>
+          <button id="clear">Clear points</button>
+        </div>
+
+        <p class="muted">
+          Click the map to add station points. Each station gets a semi-transparent <b>0.5-mile</b> radial buffer.
+        </p>
+
+        <div class="card">
+          <div class="kv"><b>Stations:</b> <span id="nStations">0</span></div>
+          <div class="kv"><b>Status:</b> <span id="status">Idle</span></div>
+        </div>
+
+        <p style="margin-top:10px; margin-bottom:6px;">Lat/Lon list:</p>
+        <div id="coords"></div>
+
+        <hr />
+
+        <h3>Station-area Census (TIGERweb + ACS)</h3>
+        <p class="muted">
+          This computes an <b>area-weighted estimate</b> of the selected ACS variable within the
+          <b>dissolved union</b> of all 0.5-mile buffers (avoids double counting).
+        </p>
+
+        <label>
+          Geography level
+          <select id="geoLevel">
+            <option value="tract">Census Tracts (faster)</option>
+            <option value="bg">Block Groups (more detailed)</option>
+          </select>
+        </label>
+
+        <label>
+          ACS variable
+          <select id="acsVar">
+            <option value="B01003_001E">Total population (B01003_001E)</option>
+            <option value="B19013_001E">Median household income (B19013_001E)</option>
+            <option value="B08201_002E">Zero-car households (B08201_002E)</option>
+          </select>
+        </label>
+
+        <label>
+          ACS year (5-year)
+          <select id="acsYear">
+            <option value="2023">2023</option>
+            <option value="2022">2022</option>
+            <option value="2021">2021</option>
+          </select>
+        </label>
+
+        <button id="run">Update summary</button>
+
+        <div class="card">
+          <div class="kv"><b>Intersecting geographies:</b> <span id="nGeos">0</span></div>
+          <div class="kv"><b>Estimated total in ½-mile union:</b></div>
+          <div id="total">—</div>
+          <div id="notes" class="tiny" style="margin-top:6px;"></div>
+        </div>
+
+        <div class="tiny" style="margin-top:10px;">
+          Notes: TIGERweb provides geometry + GEOIDs; ACS API provides values. For large corridors or many counties,
+          performance may degrade without caching/back-end support.
+        </div>
       </div>
 
-      <p class="muted">
-        Each click adds a station point and a semi-transparent <b>0.5-mile</b> radial buffer.
-      </p>
-
-      <p>Lat/Lon list (copy into CSV, etc.):</p>
-      <div id="coords"></div>
+      <div id="map"></div>
     </div>
 
     <script>
-      // Minimal raster basemap style using public OSM tiles.
-      // For production/high-traffic use, use a proper tile provider or host your own tiles.
+      // ----------------------------
+      // Basemap (OSM raster)
+      // ----------------------------
       const rasterStyle = {
         version: 8,
         sources: {
@@ -80,9 +184,15 @@
 
       map.addControl(new maplibregl.NavigationControl(), "top-right");
 
-      // Store points and corresponding 1/2-mile buffers as GeoJSON features
+      // ----------------------------
+      // Station points + 0.5-mile buffers
+      // ----------------------------
       let points = [];
       let buffers = [];
+
+      function setStatus(s) {
+        document.getElementById("status").textContent = s;
+      }
 
       function pointsGeoJSON() {
         return { type: "FeatureCollection", features: points };
@@ -93,6 +203,7 @@
       }
 
       function updateCoordsPanel() {
+        document.getElementById("nStations").textContent = String(points.length);
         const lines = points.map((f, i) => {
           const [lon, lat] = f.geometry.coordinates;
           return `${i + 1}\t${lat.toFixed(6)}\t${lon.toFixed(6)}`;
@@ -101,15 +212,14 @@
         document.getElementById("coords").textContent = header + lines.join("\n");
       }
 
-      function renderLayers() {
+      function renderStationLayers() {
         const ptsSrc = "stations";
         const ptsLayer = "stations-layer";
-
         const bufSrc = "buffers";
         const bufFillLayer = "buffers-fill";
         const bufLineLayer = "buffers-line";
 
-        // --- Buffers ---
+        // Buffers
         if (!map.getSource(bufSrc)) {
           map.addSource(bufSrc, { type: "geojson", data: buffersGeoJSON() });
 
@@ -117,27 +227,20 @@
             id: bufFillLayer,
             type: "fill",
             source: bufSrc,
-            paint: {
-              "fill-color": "#2b6cb0",
-              "fill-opacity": 0.2
-            }
+            paint: { "fill-color": "#2b6cb0", "fill-opacity": 0.2 }
           });
 
           map.addLayer({
             id: bufLineLayer,
             type: "line",
             source: bufSrc,
-            paint: {
-              "line-color": "#2b6cb0",
-              "line-width": 2,
-              "line-opacity": 0.6
-            }
+            paint: { "line-color": "#2b6cb0", "line-width": 2, "line-opacity": 0.6 }
           });
         } else {
           map.getSource(bufSrc).setData(buffersGeoJSON());
         }
 
-        // --- Points ---
+        // Points
         if (!map.getSource(ptsSrc)) {
           map.addSource(ptsSrc, { type: "geojson", data: pointsGeoJSON() });
 
@@ -162,47 +265,289 @@
       function addStationPoint(lon, lat) {
         const idx = points.length + 1;
 
-        // Add point feature
         points.push({
           type: "Feature",
           properties: { name: `Station ${idx}`, stationIdx: idx },
           geometry: { type: "Point", coordinates: [lon, lat] }
         });
 
-        // Add 0.5-mile buffer polygon (circle)
         const pt = turf.point([lon, lat]);
         const circle = turf.circle(pt, 0.5, { units: "miles", steps: 64 });
 
-        buffers.push({
-          ...circle,
-          properties: { stationIdx: idx }
-        });
+        buffers.push({ ...circle, properties: { stationIdx: idx } });
 
-        renderLayers();
+        renderStationLayers();
       }
 
-      map.on("load", () => {
-        // Initial draw (empty)
-        renderLayers();
+      // ----------------------------
+      // Dissolve buffers into a union polygon (to avoid double counting)
+      // ----------------------------
+      function bufferUnionPolygon() {
+        if (buffers.length === 0) return null;
+        let u = buffers[0];
+        for (let i = 1; i < buffers.length; i++) {
+          u = turf.union(u, buffers[i]);
+        }
+        return u;
+      }
 
-        // Add point + buffer on click
+      function bboxStringFromFeature(feat) {
+        const b = turf.bbox(feat); // [minX, minY, maxX, maxY]
+        return b.join(",");
+      }
+
+      // ----------------------------
+      // TIGERweb fetch: Tracts or Block Groups intersecting the union polygon
+      // TIGERweb/Tracts_Blocks layer indices (current vintage):
+      //   0 = Census Tracts
+      //   1 = Census Block Groups
+      // Source: TIGERweb/Tracts_Blocks MapServer layers list
+      // ----------------------------
+      async function fetchTigerwebGeos(geoLevel, unionFeat) {
+        const bbox = bboxStringFromFeature(unionFeat);
+
+        const layerId = (geoLevel === "tract") ? 0 : 1;
+        const layerUrl = `https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/Tracts_Blocks/MapServer/${layerId}`;
+
+        const params = new URLSearchParams({
+          where: "1=1",
+          outFields: "GEOID",
+          geometry: bbox,
+          geometryType: "esriGeometryEnvelope",
+          inSR: "4326",
+          spatialRel: "esriSpatialRelIntersects",
+          outSR: "4326",
+          returnGeometry: "true",
+          f: "geojson"
+        });
+
+        const url = `${layerUrl}/query?${params.toString()}`;
+
+        const resp = await fetch(url);
+        if (!resp.ok) throw new Error(`TIGERweb error ${resp.status}`);
+        const geojson = await resp.json();
+
+        // Precise filter client-side
+        const intersecting = (geojson.features || []).filter(f => turf.booleanIntersects(f, unionFeat));
+        return intersecting;
+      }
+
+      // ----------------------------
+      // ACS API fetch: values for chosen variable
+      // Strategy: group by state+county; request county-wide tract:* (or bg:* + tract:*)
+      // and join locally by GEOID. (Simple MVP; can be optimized later.)
+      // ----------------------------
+      function parseGEOID(geoLevel, geoid) {
+        const state = geoid.slice(0, 2);
+        const county = geoid.slice(2, 5);
+        const tract = geoid.slice(5, 11);
+        const blkgrp = (geoLevel === "bg") ? geoid.slice(11, 12) : null;
+        return { state, county, tract, blkgrp };
+      }
+
+      async function fetchACSValues(geoLevel, year, varCode, geoids) {
+        const groups = new Map();
+        for (const g of geoids) {
+          const p = parseGEOID(geoLevel, g);
+          const key = `${p.state}-${p.county}`;
+          if (!groups.has(key)) groups.set(key, { state: p.state, county: p.county });
+        }
+
+        const results = new Map(); // GEOID -> value
+        const base = `https://api.census.gov/data/${year}/acs/acs5`;
+
+        for (const { state, county } of groups.values()) {
+          let forClause, inClause;
+          if (geoLevel === "tract") {
+            forClause = "tract:*";
+            inClause = `state:${state}%20county:${county}`;
+          } else {
+            forClause = "block%20group:*";
+            inClause = `state:${state}%20county:${county}%20tract:*`;
+          }
+
+          const url = `${base}?get=NAME,${encodeURIComponent(varCode)}&for=${forClause}&in=${inClause}`;
+          const resp = await fetch(url);
+          if (!resp.ok) throw new Error(`ACS API error ${resp.status} for state ${state} county ${county}`);
+          const rows = await resp.json();
+
+          const header = rows[0];
+          const idxVar = header.indexOf(varCode);
+          if (idxVar === -1) throw new Error(`ACS response missing variable ${varCode}`);
+
+          for (let i = 1; i < rows.length; i++) {
+            const r = rows[i];
+            const val = Number(r[idxVar]);
+            if (!Number.isFinite(val)) continue;
+
+            if (geoLevel === "tract") {
+              const tract = r[header.indexOf("tract")];
+              const st = r[header.indexOf("state")];
+              const co = r[header.indexOf("county")];
+              results.set(`${st}${co}${tract}`, val);
+            } else {
+              const bg = r[header.indexOf("block group")];
+              const tract = r[header.indexOf("tract")];
+              const st = r[header.indexOf("state")];
+              const co = r[header.indexOf("county")];
+              results.set(`${st}${co}${tract}${bg}`, val);
+            }
+          }
+        }
+
+        return results;
+      }
+
+      // ----------------------------
+      // Area-weighted estimate inside union polygon
+      // ----------------------------
+      function estimateWithinUnion(unionFeat, geos, acsMap) {
+        let total = 0;
+        let used = 0;
+
+        for (const f of geos) {
+          const geoid = f.properties && f.properties.GEOID;
+          if (!geoid) continue;
+
+          const v = acsMap.get(geoid);
+          if (v == null) continue;
+
+          const inter = turf.intersect(f, unionFeat);
+          if (!inter) continue;
+
+          const aInter = turf.area(inter);
+          const aGeo = turf.area(f);
+          if (aGeo <= 0) continue;
+
+          const frac = Math.min(1, Math.max(0, aInter / aGeo));
+          total += v * frac;
+          used++;
+        }
+
+        return { total, used };
+      }
+
+      // ----------------------------
+      // Map overlay for TIGERweb geographies (optional but useful)
+      // ----------------------------
+      function renderCensusOverlay(geos) {
+        const srcId = "census-geos";
+        const fillId = "census-geos-fill";
+        const lineId = "census-geos-line";
+
+        const fc = { type: "FeatureCollection", features: geos };
+
+        if (!map.getSource(srcId)) {
+          map.addSource(srcId, { type: "geojson", data: fc });
+
+          // Draw beneath buffers/points so station-area remains visually primary
+          map.addLayer({
+            id: fillId,
+            type: "fill",
+            source: srcId,
+            paint: { "fill-color": "#111827", "fill-opacity": 0.08 }
+          }, "buffers-fill");
+
+          map.addLayer({
+            id: lineId,
+            type: "line",
+            source: srcId,
+            paint: { "line-color": "#111827", "line-width": 1, "line-opacity": 0.35 }
+          }, "buffers-fill");
+        } else {
+          map.getSource(srcId).setData(fc);
+        }
+      }
+
+      // ----------------------------
+      // Sidebar action: Update summary
+      // ----------------------------
+      async function runCensusSummary() {
+        const notesEl = document.getElementById("notes");
+        const totalEl = document.getElementById("total");
+        const nGeosEl = document.getElementById("nGeos");
+
+        notesEl.textContent = "";
+        totalEl.textContent = "—";
+        nGeosEl.textContent = "0";
+
+        const unionFeat = bufferUnionPolygon();
+        if (!unionFeat) {
+          setStatus("No stations yet");
+          notesEl.textContent = "Add at least one station to compute a station-area estimate.";
+          return;
+        }
+
+        const geoLevel = document.getElementById("geoLevel").value;
+        const year = document.getElementById("acsYear").value;
+        const varCode = document.getElementById("acsVar").value;
+
+        setStatus("Querying TIGERweb…");
+        const geos = await fetchTigerwebGeos(geoLevel, unionFeat);
+        nGeosEl.textContent = String(geos.length);
+
+        // Visual overlay
+        renderCensusOverlay(geos);
+
+        if (geos.length === 0) {
+          setStatus("Done");
+          notesEl.textContent = "No tracts/block groups intersect the station-area union (unexpected).";
+          return;
+        }
+
+        setStatus("Fetching ACS values…");
+        const geoids = geos.map(f => f.properties.GEOID).filter(Boolean);
+        const acsMap = await fetchACSValues(geoLevel, year, varCode, geoids);
+
+        setStatus("Computing estimate…");
+        const { total, used } = estimateWithinUnion(unionFeat, geos, acsMap);
+
+        totalEl.textContent = Number.isFinite(total)
+          ? total.toLocaleString(undefined, { maximumFractionDigits: 0 })
+          : "—";
+
+        notesEl.textContent =
+          `Area-weighted estimate using ${used} intersecting ${geoLevel === "tract" ? "tracts" : "block groups"}; ACS ${year} 5-year.`;
+
+        setStatus("Done");
+      }
+
+      // ----------------------------
+      // Initialize
+      // ----------------------------
+      map.on("load", () => {
+        setStatus("Ready");
+        renderStationLayers();
+
         map.on("click", (e) => {
           addStationPoint(e.lngLat.lng, e.lngLat.lat);
         });
 
-        // Clear all
         document.getElementById("clear").addEventListener("click", () => {
           points = [];
           buffers = [];
-          renderLayers();
+          renderStationLayers();
+          document.getElementById("nGeos").textContent = "0";
+          document.getElementById("total").textContent = "—";
+          document.getElementById("notes").textContent = "";
+          setStatus("Cleared");
         });
 
-        // Delete last
         document.getElementById("undo").addEventListener("click", () => {
           if (points.length > 0) {
             points.pop();
             buffers.pop();
-            renderLayers();
+            renderStationLayers();
+            setStatus("Updated");
+          }
+        });
+
+        document.getElementById("run").addEventListener("click", async () => {
+          try {
+            await runCensusSummary();
+          } catch (e) {
+            setStatus("Error");
+            document.getElementById("notes").textContent = String(e && e.message ? e.message : e);
           }
         });
       });
