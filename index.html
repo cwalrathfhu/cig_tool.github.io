@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>MapLibre Stations + 0.5-mi Buffers + TIGERweb/ACS + LODES (Upload-based)</title>
+    <title>MapLibre Stations + 0.5-mi Buffers + TIGERweb/ACS + LODES (Gray Basemap)</title>
 
     <!-- MapLibre GL JS -->
     <link
@@ -182,8 +182,7 @@
 
         <h3>LODES (File-based workflow)</h3>
         <p class="muted">
-          Some browsers block cross-site <code>fetch()</code> of LODES files. This workflow avoids that by:
-          <b>(1)</b> downloading the official <code>.csv.gz</code> file and <b>(2)</b> loading it from your computer.
+          Download the official <code>.csv.gz</code> file and load it from your computer (avoids cross-site fetch issues).
         </p>
 
         <div class="card">
@@ -211,30 +210,33 @@
 
     <script>
       // ----------------------------
-      // Basemap
+      // Gray basemap (CartoDB Positron raster tiles)
+      // Cleaner, grayscale-ish. Public tiles; review provider usage policy for production.
       // ----------------------------
       const rasterStyle = {
         version: 8,
         sources: {
-          osm: {
+          carto: {
             type: "raster",
             tiles: [
-              "https://a.tile.openstreetmap.org/{z}/{x}/{y}.png",
-              "https://b.tile.openstreetmap.org/{z}/{x}/{y}.png",
-              "https://c.tile.openstreetmap.org/{z}/{x}/{y}.png"
+              "https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
+              "https://b.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
+              "https://c.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
+              "https://d.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png"
             ],
             tileSize: 256,
             attribution:
-              '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+              '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors ' +
+              '© <a href="https://carto.com/attributions">CARTO</a>'
           }
         },
-        layers: [{ id: "osm", type: "raster", source: "osm" }]
+        layers: [{ id: "carto", type: "raster", source: "carto" }]
       };
 
       const map = new maplibregl.Map({
         container: "map",
         style: rasterStyle,
-        center: [-104.9903, 39.7392], // Denver default
+        center: [-104.9903, 39.7392],
         zoom: 10
       });
 
@@ -245,7 +247,7 @@
       }
 
       // ----------------------------
-      // Station points + buffers
+      // Stations + buffers
       // ----------------------------
       let points = [];
       let buffers = [];
@@ -325,9 +327,7 @@
       function bufferUnionPolygon() {
         if (buffers.length === 0) return null;
         let u = buffers[0];
-        for (let i = 1; i < buffers.length; i++) {
-          u = turf.union(u, buffers[i]);
-        }
+        for (let i = 1; i < buffers.length; i++) u = turf.union(u, buffers[i]);
         return u;
       }
 
@@ -339,26 +339,23 @@
       // Variable metadata
       // ----------------------------
       const VAR_META = {
-        // ACS sums
-        "B01003_001E": { source: "ACS", agg: "sum", fmt: "int", label: "Total population" },
-        "B11001_001E": { source: "ACS", agg: "sum", fmt: "int", label: "Total households" },
-        "B25001_001E": { source: "ACS", agg: "sum", fmt: "int", label: "Total housing units" },
-        "B25002_001E": { source: "ACS", agg: "sum", fmt: "int", label: "Occupied housing units" },
-        "B25002_003E": { source: "ACS", agg: "sum", fmt: "int", label: "Vacant housing units" },
-        "B08201_002E": { source: "ACS", agg: "sum", fmt: "int", label: "Zero-car households" },
-        "B17001_002E": { source: "ACS", agg: "sum", fmt: "int", label: "Persons below poverty level" },
+        "B01003_001E": { source: "ACS", agg: "sum", fmt: "int" },
+        "B11001_001E": { source: "ACS", agg: "sum", fmt: "int" },
+        "B25001_001E": { source: "ACS", agg: "sum", fmt: "int" },
+        "B25002_001E": { source: "ACS", agg: "sum", fmt: "int" },
+        "B25002_003E": { source: "ACS", agg: "sum", fmt: "int" },
+        "B08201_002E": { source: "ACS", agg: "sum", fmt: "int" },
+        "B17001_002E": { source: "ACS", agg: "sum", fmt: "int" },
 
-        // ACS non-additive (approx)
-        "B19013_001E": { source: "ACS", agg: "avg", fmt: "usd", label: "Median household income" },
-        "B25064_001E": { source: "ACS", agg: "avg", fmt: "usd", label: "Median gross rent" },
-        "B25077_001E": { source: "ACS", agg: "avg", fmt: "usd", label: "Median home value" },
+        "B19013_001E": { source: "ACS", agg: "avg", fmt: "usd" },
+        "B25064_001E": { source: "ACS", agg: "avg", fmt: "usd" },
+        "B25077_001E": { source: "ACS", agg: "avg", fmt: "usd" },
 
-        // LODES employment
-        "LODES_WAC_C000": { source: "LODES", agg: "sum", fmt: "int", label: "Total existing employment (WAC C000)" }
+        "LODES_WAC_C000": { source: "LODES", agg: "sum", fmt: "int" }
       };
 
       function getMeta(code) {
-        return VAR_META[code] || { source: "ACS", agg: "sum", fmt: "int", label: code };
+        return VAR_META[code] || { source: "ACS", agg: "sum", fmt: "int" };
       }
 
       function setAggUI(meta) {
@@ -544,9 +541,7 @@
           used++;
         }
 
-        if (aggMode === "avg") {
-          return { value: denom > 0 ? (numerator / denom) : NaN, used, weightSum: denom };
-        }
+        if (aggMode === "avg") return { value: denom > 0 ? (numerator / denom) : NaN, used, weightSum: denom };
         return { value: numerator, used, weightSum: denom };
       }
 
@@ -607,12 +602,9 @@
 
       function setLodesLoadedUI(loaded, name, nRows) {
         document.getElementById("lodesLoaded").textContent = loaded ? "Yes" : "No";
-        if (!loaded) {
-          document.getElementById("lodesInfo").textContent = "";
-        } else {
-          document.getElementById("lodesInfo").textContent =
-            `Loaded ${name} (${nRows.toLocaleString()} block rows).`;
-        }
+        document.getElementById("lodesInfo").textContent = loaded
+          ? `Loaded ${name} (${nRows.toLocaleString()} block rows).`
+          : "";
       }
 
       async function parseLodesFromUploadedFile(file) {
@@ -646,7 +638,6 @@
           if (!Number.isFinite(v)) continue;
           jobsMap.set(String(g), v);
         }
-
         return jobsMap;
       }
 
@@ -704,14 +695,12 @@
           return;
         }
 
-        // Ensure user loaded a LODES file
         if (!LODES_UPLOADED) {
           setStatus("LODES file required");
           notesEl.textContent = "Download the LODES file for your state, then load the .csv.gz using the file picker.";
           return;
         }
 
-        // Count blocks inside union (centroid/internal point method)
         const blocksInside = await fetchBlocksInternalPointsInUnion(unionFeat);
         nGeosEl.textContent = String(blocksInside.size);
 
@@ -739,7 +728,6 @@
       // ----------------------------
       async function runAcsSummary(varCode, year, geoLevel) {
         const meta = getMeta(varCode);
-
         const notesEl = document.getElementById("notes");
         const totalEl = document.getElementById("total");
         const nGeosEl = document.getElementById("nGeos");
@@ -841,7 +829,7 @@
           }
         });
 
-        // LODES: download for detected state (map center) and selected year
+        // LODES download (opens official URL; user then uploads file)
         document.getElementById("downloadLodes").addEventListener("click", async () => {
           try {
             setStatus("Determining state…");
@@ -863,7 +851,7 @@
           }
         });
 
-        // LODES: file upload parsing
+        // LODES upload parsing
         document.getElementById("lodesFile").addEventListener("change", async (e) => {
           const file = e.target.files && e.target.files[0];
           if (!file) return;
@@ -884,7 +872,7 @@
         });
 
         // Initialize LODES loaded UI
-        setLodesLoadedUI(false, "", 0);
+        document.getElementById("lodesLoaded").textContent = "No";
       });
     </script>
   </body>
