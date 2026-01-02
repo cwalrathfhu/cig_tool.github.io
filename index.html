@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>MapLibre Stations + 0.5-mi Buffers + TIGERweb/ACS + LODES (Gray + FTA Breakpoint Ratings)</title>
+    <title>MapLibre Stations + Buffers + ACS + LODES + Uploads (FTA Breakpoint Ratings)</title>
 
     <!-- MapLibre GL JS -->
     <link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
@@ -29,7 +29,7 @@
       body { margin: 0; font-family: system-ui, sans-serif; background: var(--bg); }
       #app { display: flex; height: 100vh; width: 100vw; }
       #sidebar {
-        width: 480px;
+        width: 520px;
         border-right: 1px solid var(--border);
         padding: 12px 14px;
         overflow: auto;
@@ -40,7 +40,7 @@
       h3 { margin: 8px 0 10px; font-size: 16px; }
       .muted { color: var(--muted); font-size: 13px; line-height: 1.35; }
       label { display:block; margin: 10px 0; font-size: 13px; }
-      select, button, input[type="file"] {
+      select, button, input[type="file"], input[type="text"] {
         width: 100%;
         padding: 8px 10px;
         margin-top: 6px;
@@ -82,7 +82,7 @@
       }
 
       .kv { font-size: 13px; }
-      .kv b { display:inline-block; min-width: 210px; }
+      .kv b { display:inline-block; min-width: 220px; }
       #total { font-size: 22px; font-weight: 700; margin-top: 6px; }
       hr { border: 0; border-top: 1px solid var(--border); margin: 12px 0; }
       .tiny { font-size: 12px; color: var(--muted); }
@@ -118,6 +118,9 @@
 
       .bpTitle { font-size: 13px; font-weight: 600; margin-bottom: 6px; }
       .bpMeta { font-size: 12px; color: var(--muted); margin-top: 6px; }
+
+      .twoCol { display:grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+      .inlineNote { margin-top: 6px; font-size: 12px; color: var(--muted); }
     </style>
   </head>
 
@@ -207,56 +210,151 @@
           <div id="notes" class="tiny" style="margin-top:6px;"></div>
         </div>
 
-        <!-- NEW: FTA breakpoint ratings card -->
+        <!-- FTA breakpoint ratings card -->
         <div class="card">
           <div class="kv"><b>FTA CIG Breakpoint Ratings (Small Starts – Land Use)</b></div>
           <div class="tiny" style="margin-top:6px;">
-            Ratings are populated only where this page can compute the corresponding measure. Others are N/A.
+            Uses the breakpoints table for: population density, employment served, LBAR ratio, community risk, essential services.
+            Where required inputs are missing, shows N/A.
           </div>
 
           <div class="bpGrid">
             <div class="bpItem">
-              <div class="bpTitle">Employment served by system</div>
-              <div>
-                <span id="bpEmpPill" class="pill na">N/A</span>
-              </div>
-              <div class="bpMeta">Value: <span id="bpEmpValue">—</span></div>
-              <div class="bpMeta">Source: LODES WAC C000 (uploaded)</div>
-            </div>
-
-            <div class="bpItem">
               <div class="bpTitle">Average population density</div>
-              <div>
-                <span id="bpPopPill" class="pill na">N/A</span>
-              </div>
+              <div><span id="bpPopPill" class="pill na">N/A</span></div>
               <div class="bpMeta">Value: <span id="bpPopValue">—</span></div>
               <div class="bpMeta">Source: ACS B01003_001E / union area</div>
             </div>
 
             <div class="bpItem">
-              <div class="bpTitle">LBAR proportion (station areas vs counties)</div>
-              <div><span class="pill na">N/A</span></div>
-              <div class="bpMeta">Not implemented</div>
+              <div class="bpTitle">Employment served by system</div>
+              <div><span id="bpEmpPill" class="pill na">N/A</span></div>
+              <div class="bpMeta">Value: <span id="bpEmpValue">—</span></div>
+              <div class="bpMeta">Source: LODES WAC C000 (uploaded)</div>
             </div>
 
             <div class="bpItem">
-              <div class="bpTitle">Community Risk</div>
-              <div><span class="pill na">N/A</span></div>
-              <div class="bpMeta">Not implemented</div>
+              <div class="bpTitle">LBAR ratio (station areas / project counties)</div>
+              <div><span id="bpLbarPill" class="pill na">N/A</span></div>
+              <div class="bpMeta">Value: <span id="bpLbarValue">—</span></div>
+              <div class="bpMeta"><span id="bpLbarNote">Requires LBAR inventory + counties</span></div>
             </div>
 
             <div class="bpItem">
-              <div class="bpTitle">Average essential services per station area</div>
-              <div><span class="pill na">N/A</span></div>
-              <div class="bpMeta">Not implemented</div>
+              <div class="bpTitle">Community Risk (High-risk %)</div>
+              <div><span id="bpCrePill" class="pill na">N/A</span></div>
+              <div class="bpMeta">Value: <span id="bpCreValue">—</span></div>
+              <div class="bpMeta"><span id="bpCreNote">Requires CRE (tract) upload</span></div>
             </div>
 
             <div class="bpItem">
-              <div class="bpTitle">Other criteria</div>
+              <div class="bpTitle">Avg essential services per station area</div>
+              <div><span id="bpEssPill" class="pill na">N/A</span></div>
+              <div class="bpMeta">Value: <span id="bpEssValue">—</span></div>
+              <div class="bpMeta"><span id="bpEssNote">Requires essential services upload</span></div>
+            </div>
+
+            <div class="bpItem">
+              <div class="bpTitle">Other categories</div>
               <div><span class="pill na">N/A</span></div>
-              <div class="bpMeta">No breakpoint mapping in this prototype</div>
+              <div class="bpMeta">Not mapped in this prototype</div>
             </div>
           </div>
+        </div>
+
+        <hr />
+
+        <h3>Uploads for Remaining Land Use Measures</h3>
+
+        <!-- CRE upload -->
+        <div class="card">
+          <div class="kv"><b>Community Risk (CRE) Upload</b></div>
+          <div class="tiny" style="margin-top:6px;">
+            Upload a tract-level CSV containing GEOID + total population + high-risk population. The tool area-apportions by tract overlap with the ½-mile union.
+          </div>
+
+          <label>
+            Upload CRE CSV (tract level)
+            <input id="creFile" type="file" accept=".csv" />
+          </label>
+
+          <div class="twoCol">
+            <label>GEOID column
+              <select id="creColGEOID" disabled></select>
+            </label>
+            <label>Total pop column
+              <select id="creColTotal" disabled></select>
+            </label>
+          </div>
+
+          <label>High-risk pop column
+            <select id="creColHigh" disabled></select>
+          </label>
+
+          <div class="tiny" id="creInfo">No file loaded.</div>
+        </div>
+
+        <!-- Essential services upload -->
+        <div class="card">
+          <div class="kv"><b>Essential Services Upload</b></div>
+          <div class="tiny" style="margin-top:6px;">
+            Upload GeoJSON (<code>FeatureCollection</code> of points) or CSV (lat/lon). Counted within <b>1-mile</b> radius of each station; reported as the average across stations.
+          </div>
+
+          <label>
+            Upload essential services (GeoJSON or CSV)
+            <input id="essFile" type="file" accept=".json,.geojson,.csv" />
+          </label>
+
+          <div class="twoCol">
+            <label>Latitude column (CSV)
+              <select id="essColLat" disabled></select>
+            </label>
+            <label>Longitude column (CSV)
+              <select id="essColLon" disabled></select>
+            </label>
+          </div>
+
+          <div class="tiny" id="essInfo">No file loaded.</div>
+        </div>
+
+        <!-- LBAR upload -->
+        <div class="card">
+          <div class="kv"><b>LBAR Housing Inventory Upload</b></div>
+          <div class="tiny" style="margin-top:6px;">
+            Upload a CSV or GeoJSON points for LBAR sites. Requires units per site and (recommended) 5-digit county FIPS per site.
+            Counties for the project corridor are entered below as comma-separated 5-digit FIPS.
+          </div>
+
+          <label>
+            Upload LBAR inventory (GeoJSON or CSV)
+            <input id="lbarFile" type="file" accept=".json,.geojson,.csv" />
+          </label>
+
+          <div class="twoCol">
+            <label>Latitude column (CSV)
+              <select id="lbarColLat" disabled></select>
+            </label>
+            <label>Longitude column (CSV)
+              <select id="lbarColLon" disabled></select>
+            </label>
+          </div>
+
+          <div class="twoCol">
+            <label>Units column
+              <select id="lbarColUnits" disabled></select>
+            </label>
+            <label>County FIPS column (optional but needed for county share)
+              <select id="lbarColCounty" disabled></select>
+            </label>
+          </div>
+
+          <label>
+            Project counties (comma-separated 5-digit county FIPS)
+            <input id="lbarCounties" type="text" placeholder="e.g., 06075,06081" />
+          </label>
+
+          <div class="tiny" id="lbarInfo">No file loaded.</div>
         </div>
 
         <hr />
@@ -415,7 +513,7 @@
       }
 
       // ----------------------------
-      // Variable metadata
+      // Variable metadata (main summary)
       // ----------------------------
       const VAR_META = {
         // ACS sums
@@ -474,23 +572,47 @@
       }
 
       // ----------------------------
-      // FTA Small Starts Land Use breakpoints (from your provided table)
+      // FTA Small Starts Land Use breakpoints (table on your provided page)
       // ----------------------------
-      const BP_EMPLOYMENT = [
-        { label: "High",        min: 220000, max: Infinity, pill: "high" },
-        { label: "Medium-High", min: 140000, max: 219999,   pill: "mh"   },
-        { label: "Medium",      min: 70000,  max: 139999,   pill: "med"  },
-        { label: "Medium-Low",  min: 40000,  max: 69999,    pill: "ml"   },
-        { label: "Low",         min: -Infinity, max: 39999, pill: "low"  }
-      ];
+      const BP = {
+        popDensity: [
+          { label: "High",        pill: "high", min: 15000, max: Infinity },
+          { label: "Medium-High", pill: "mh",   min: 9600,  max: 14999 },
+          { label: "Medium",      pill: "med",  min: 5760,  max: 9599 },
+          { label: "Medium-Low",  pill: "ml",   min: 2560,  max: 5759 },
+          { label: "Low",         pill: "low",  min: -Infinity, max: 2559 }
+        ],
+        employment: [
+          { label: "High",        pill: "high", min: 220000, max: Infinity },
+          { label: "Medium-High", pill: "mh",   min: 140000, max: 219999 },
+          { label: "Medium",      pill: "med",  min: 70000,  max: 139999 },
+          { label: "Medium-Low",  pill: "ml",   min: 40000,  max: 69999 },
+          { label: "Low",         pill: "low",  min: -Infinity, max: 39999 }
+        ],
+        lbarRatio: [
+          { label: "High",        pill: "high", min: 2.5000000001, max: Infinity }, // strictly > 2.50
+          { label: "Medium-High", pill: "mh",   min: 2.25, max: 2.49 },
+          { label: "Medium",      pill: "med",  min: 1.50, max: 2.24 },
+          { label: "Medium-Low",  pill: "ml",   min: 1.10, max: 1.49 },
+          { label: "Low",         pill: "low",  min: -Infinity, max: 1.09 }
+        ],
+        communityRiskPct: [
+          { label: "High",        pill: "high", min: 50.0, max: Infinity },
+          { label: "Medium-High", pill: "mh",   min: 40.0, max: 49.9 },
+          { label: "Medium",      pill: "med",  min: 18.0, max: 39.9 },
+          { label: "Medium-Low",  pill: "ml",   min: 5.0,  max: 17.9 },
+          { label: "Low",         pill: "low",  min: -Infinity, max: 4.99 }
+        ],
+        essentialAvg: [
+          { label: "High",        pill: "high", min: 7.0000000001, max: Infinity }, // strictly > 7
+          { label: "Medium-High", pill: "mh",   min: 5.0, max: 7.0 },
+          { label: "Medium",      pill: "med",  min: 3.0, max: 4.0 },
+          { label: "Medium-Low",  pill: "ml",   min: 1.0, max: 2.0 },
+          { label: "Low",         pill: "low",  min: -Infinity, max: 0.9999999999 } // < 1
+        ]
+      };
 
-      const BP_POPDENS = [
-        { label: "High",        min: 15000, max: Infinity, pill: "high" },
-        { label: "Medium-High", min: 9600,  max: 14999,   pill: "mh"   },
-        { label: "Medium",      min: 5760,  max: 9599,    pill: "med"  },
-        { label: "Medium-Low",  min: 2560,  max: 5759,    pill: "ml"   },
-        { label: "Low",         min: -Infinity, max: 2559, pill: "low"  }
-      ];
+      const RATING_ORDER = ["Low", "Medium-Low", "Medium", "Medium-High", "High"];
 
       function classify(value, breakpoints) {
         if (!Number.isFinite(value)) return { label: "N/A", pill: "na" };
@@ -500,10 +622,16 @@
         return { label: "N/A", pill: "na" };
       }
 
-      function setPill(id, label, pill) {
-        const el = document.getElementById(id);
+      function bumpOneLevel(ratingLabel) {
+        const idx = RATING_ORDER.indexOf(ratingLabel);
+        if (idx < 0) return ratingLabel;
+        return RATING_ORDER[Math.min(RATING_ORDER.length - 1, idx + 1)];
+      }
+
+      function setPill(elId, label, pillClass) {
+        const el = document.getElementById(elId);
         el.textContent = label;
-        el.className = `pill ${pill || "na"}`;
+        el.className = `pill ${pillClass || "na"}`;
       }
 
       // ----------------------------
@@ -537,7 +665,7 @@
       }
 
       // ----------------------------
-      // TIGERweb fetch for tracts / block groups
+      // TIGERweb fetch for tracts / block groups / blocks
       // Tracts_Blocks MapServer:
       //   0 = Census Tracts
       //   1 = Census Block Groups
@@ -632,6 +760,42 @@
         return results;
       }
 
+      async function fetchACSCountyValues(year, varCode, countyFipsList) {
+        // countyFipsList: array of 5-digit "ssccc"
+        const base = `https://api.census.gov/data/${year}/acs/acs5`;
+        const byState = new Map();
+
+        for (const c5 of countyFipsList) {
+          const st = c5.slice(0, 2);
+          const co = c5.slice(2, 5);
+          if (!byState.has(st)) byState.set(st, []);
+          byState.get(st).push(co);
+        }
+
+        const out = new Map(); // c5 -> value
+        for (const [st, counties] of byState.entries()) {
+          // Fetch all counties in state then filter (ACS API doesn't support a list in "for=county:")
+          const url = `${base}?get=NAME,${encodeURIComponent(varCode)}&for=county:*&in=state:${st}`;
+          const resp = await fetch(url);
+          if (!resp.ok) throw new Error(`ACS county fetch failed ${resp.status} for state ${st}`);
+          const rows = await resp.json();
+          const header = rows[0];
+          const idxVar = header.indexOf(varCode);
+          const idxState = header.indexOf("state");
+          const idxCounty = header.indexOf("county");
+
+          for (let i = 1; i < rows.length; i++) {
+            const r = rows[i];
+            const co = r[idxCounty];
+            if (!counties.includes(co)) continue;
+            const val = Number(r[idxVar]);
+            if (!Number.isFinite(val)) continue;
+            out.set(`${st}${co}`, val);
+          }
+        }
+        return out;
+      }
+
       function aggregateWithinUnion(unionFeat, geos, valueMap, aggMode) {
         let numerator = 0;
         let denom = 0;
@@ -674,6 +838,58 @@
         const agg = aggregateWithinUnion(unionFeat, geos, valueMap, meta.agg);
         return { value: agg.value, used: agg.used };
       }
+
+      // ----------------------------
+      // CSV parsing helpers (simple; assumes no embedded commas/quotes)
+      // ----------------------------
+      function parseCSVSimple(text) {
+        const lines = text.split(/\r?\n/).filter(l => l.trim().length > 0);
+        if (lines.length < 2) return { headers: [], rows: [] };
+        const headers = lines[0].split(",").map(h => h.trim());
+        const rows = [];
+        for (let i = 1; i < lines.length; i++) {
+          const parts = lines[i].split(",");
+          const obj = {};
+          for (let j = 0; j < headers.length; j++) obj[headers[j]] = (parts[j] ?? "").trim();
+          rows.push(obj);
+        }
+        return { headers, rows };
+      }
+
+      function fillSelect(selectEl, options, placeholder = "Select…") {
+        selectEl.innerHTML = "";
+        const opt0 = document.createElement("option");
+        opt0.value = "";
+        opt0.textContent = placeholder;
+        selectEl.appendChild(opt0);
+        for (const o of options) {
+          const opt = document.createElement("option");
+          opt.value = o;
+          opt.textContent = o;
+          selectEl.appendChild(opt);
+        }
+      }
+
+      function enableSelect(selectEl, enabled) {
+        selectEl.disabled = !enabled;
+      }
+
+      // ----------------------------
+      // Upload state: CRE, Essential Services, LBAR
+      // ----------------------------
+      let CRE_MAP = null; // Map(tractGEOID -> { total, high })
+      let CRE_HEADERS = [];
+      let CRE_ROWS = [];
+
+      let ESS_POINTS = null; // array of [lon,lat]
+      let ESS_IS_GEOJSON = false;
+      let ESS_HEADERS = [];
+      let ESS_ROWS = [];
+
+      let LBAR_SITES = null; // array {lon,lat,units,county5?}
+      let LBAR_IS_GEOJSON = false;
+      let LBAR_HEADERS = [];
+      let LBAR_ROWS = [];
 
       // ----------------------------
       // LODES: download + upload parsing + employment served computation
@@ -823,72 +1039,320 @@
       }
 
       // ----------------------------
+      // Upload computations: CRE, Essential, LBAR
+      // ----------------------------
+      function buildCreMapFromRows(geoidCol, totalCol, highCol) {
+        const m = new Map();
+        for (const r of CRE_ROWS) {
+          const geoid = (r[geoidCol] || "").trim();
+          if (!geoid) continue;
+          const total = Number(r[totalCol]);
+          const high = Number(r[highCol]);
+          if (!Number.isFinite(total) || !Number.isFinite(high)) continue;
+          // Expect 11-digit tract GEOID; accept longer by trimming to first 11 if needed
+          const g11 = geoid.length >= 11 ? geoid.slice(0, 11) : geoid;
+          m.set(g11, { total, high });
+        }
+        return m;
+      }
+
+      async function computeCommunityRiskFromCre() {
+        // Needs: CRE_MAP + station union + TIGERweb tracts
+        const unionFeat = bufferUnionPolygon();
+        if (!unionFeat || !CRE_MAP) return { pct: NaN, highInUnion: 0, totalInUnion: 0, used: 0 };
+
+        const tracts = await fetchTigerwebGeos("tract", unionFeat);
+
+        let highSum = 0;
+        let totalSum = 0;
+        let used = 0;
+
+        for (const t of tracts) {
+          const geoid = t.properties && t.properties.GEOID;
+          if (!geoid) continue;
+          const v = CRE_MAP.get(geoid);
+          if (!v) continue;
+
+          const inter = turf.intersect(t, unionFeat);
+          if (!inter) continue;
+
+          const aInter = turf.area(inter);
+          const aTract = turf.area(t);
+          if (aTract <= 0) continue;
+          const frac = Math.min(1, Math.max(0, aInter / aTract));
+
+          highSum += v.high * frac;
+          totalSum += v.total * frac;
+          used++;
+        }
+
+        const pct = totalSum > 0 ? (highSum / totalSum) * 100 : NaN;
+        return { pct, highInUnion: highSum, totalInUnion: totalSum, used };
+      }
+
+      function extractPointsFromGeoJSON(obj) {
+        const pts = [];
+        if (!obj || obj.type !== "FeatureCollection" || !Array.isArray(obj.features)) return pts;
+        for (const f of obj.features) {
+          if (!f || !f.geometry) continue;
+          const g = f.geometry;
+          if (g.type === "Point" && Array.isArray(g.coordinates) && g.coordinates.length >= 2) {
+            const lon = Number(g.coordinates[0]);
+            const lat = Number(g.coordinates[1]);
+            if (Number.isFinite(lon) && Number.isFinite(lat)) pts.push([lon, lat]);
+          }
+        }
+        return pts;
+      }
+
+      function buildPointsFromCsvRows(rows, latCol, lonCol) {
+        const pts = [];
+        for (const r of rows) {
+          const lat = Number(r[latCol]);
+          const lon = Number(r[lonCol]);
+          if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+          pts.push([lon, lat]);
+        }
+        return pts;
+      }
+
+      function buildLbarSitesFromGeoJSON(obj) {
+        // Expect points with properties.units and optionally properties.county (5-digit)
+        const sites = [];
+        if (!obj || obj.type !== "FeatureCollection" || !Array.isArray(obj.features)) return sites;
+        for (const f of obj.features) {
+          if (!f || !f.geometry || f.geometry.type !== "Point") continue;
+          const c = f.geometry.coordinates;
+          if (!Array.isArray(c) || c.length < 2) continue;
+          const lon = Number(c[0]);
+          const lat = Number(c[1]);
+          if (!Number.isFinite(lon) || !Number.isFinite(lat)) continue;
+
+          const p = f.properties || {};
+          const units = Number(p.units ?? p.UNITS ?? p.lbar_units ?? p.LBAR_UNITS);
+          if (!Number.isFinite(units)) continue;
+
+          const county = String(p.county ?? p.COUNTY ?? p.county_fips ?? p.COUNTY_FIPS ?? "").trim();
+          const county5 = county.length >= 5 ? county.slice(0, 5) : county;
+
+          sites.push({ lon, lat, units, county5: county5 || null });
+        }
+        return sites;
+      }
+
+      function buildLbarSitesFromCsvRows(rows, latCol, lonCol, unitsCol, countyCol) {
+        const sites = [];
+        for (const r of rows) {
+          const lat = Number(r[latCol]);
+          const lon = Number(r[lonCol]);
+          const units = Number(r[unitsCol]);
+          if (!Number.isFinite(lat) || !Number.isFinite(lon) || !Number.isFinite(units)) continue;
+
+          let county5 = null;
+          if (countyCol) {
+            const raw = String(r[countyCol] ?? "").trim();
+            if (raw) county5 = raw.length >= 5 ? raw.slice(0, 5) : raw;
+          }
+          sites.push({ lon, lat, units, county5 });
+        }
+        return sites;
+      }
+
+      function parseCountyListInput() {
+        const raw = document.getElementById("lbarCounties").value || "";
+        const parts = raw.split(/[\s,;]+/).map(x => x.trim()).filter(Boolean);
+        const cleaned = parts.map(x => x.replace(/\D/g, "")).filter(x => x.length === 5);
+        // Unique
+        return Array.from(new Set(cleaned));
+      }
+
+      async function computeLbarRatio() {
+        // Station area share: LBAR units within union / HU within union
+        // County share: LBAR units within listed counties / HU within listed counties
+        // Ratio: share_station / share_county
+        // Boost: if share_county > 5%, bump 1 level.
+
+        const unionFeat = bufferUnionPolygon();
+        if (!unionFeat || !LBAR_SITES || LBAR_SITES.length === 0) {
+          return { ratio: NaN, shareStation: NaN, shareCounty: NaN, note: "LBAR inventory not loaded." };
+        }
+
+        const year = document.getElementById("yearSelect").value;
+        const geoLevel = document.getElementById("geoLevel").value;
+
+        // 1) LBAR in station union
+        let lbarStation = 0;
+        for (const s of LBAR_SITES) {
+          if (turf.booleanPointInPolygon(turf.point([s.lon, s.lat]), unionFeat)) {
+            lbarStation += s.units;
+          }
+        }
+
+        // 2) Total housing units in station union (ACS B25001_001E)
+        const huStationRes = await computeAcsValueOnly("B25001_001E", year, geoLevel);
+        const huStation = huStationRes.value;
+
+        const shareStation = (Number.isFinite(huStation) && huStation > 0) ? (lbarStation / huStation) : NaN;
+
+        // 3) County share
+        const counties = parseCountyListInput();
+        if (counties.length === 0) {
+          return { ratio: NaN, shareStation, shareCounty: NaN, note: "Enter project counties (5-digit FIPS) to compute county share." };
+        }
+
+        // Need county field on sites to sum LBAR_county
+        const sitesWithCounty = LBAR_SITES.filter(s => s.county5 && s.county5.length === 5);
+        if (sitesWithCounty.length === 0) {
+          return { ratio: NaN, shareStation, shareCounty: NaN, note: "LBAR inventory missing county FIPS per site; cannot compute county share." };
+        }
+
+        let lbarCounty = 0;
+        for (const s of sitesWithCounty) {
+          if (counties.includes(s.county5)) lbarCounty += s.units;
+        }
+
+        // Total housing units in project counties
+        const huCountyMap = await fetchACSCountyValues(year, "B25001_001E", counties);
+        let huCounty = 0;
+        let huFound = 0;
+        for (const c5 of counties) {
+          const v = huCountyMap.get(c5);
+          if (v != null) { huCounty += v; huFound++; }
+        }
+
+        const shareCounty = (huFound > 0 && huCounty > 0) ? (lbarCounty / huCounty) : NaN;
+
+        const ratio = (Number.isFinite(shareStation) && Number.isFinite(shareCounty) && shareCounty > 0)
+          ? (shareStation / shareCounty)
+          : NaN;
+
+        const note = (Number.isFinite(shareCounty))
+          ? `LBAR county share=${(shareCounty*100).toFixed(2)}% (${huFound}/${counties.length} counties found in ACS)`
+          : "County share unavailable.";
+
+        return { ratio, shareStation, shareCounty, note };
+      }
+
+      function computeEssentialServicesAvg() {
+        // Avg count of essential points within 1 mile of each station point
+        if (!ESS_POINTS || ESS_POINTS.length === 0 || points.length === 0) return { avg: NaN, perStation: [] };
+
+        const perStation = [];
+        for (const p of points) {
+          const [lon, lat] = p.geometry.coordinates;
+          const buf = turf.circle(turf.point([lon, lat]), 1.0, { units: "miles", steps: 64 });
+          let count = 0;
+          for (const q of ESS_POINTS) {
+            if (turf.booleanPointInPolygon(turf.point(q), buf)) count++;
+          }
+          perStation.push(count);
+        }
+        const avg = perStation.reduce((a, b) => a + b, 0) / perStation.length;
+        return { avg, perStation };
+      }
+
+      // ----------------------------
       // Breakpoint ratings updater
       // ----------------------------
       async function updateBreakpointRatings() {
         const unionFeat = bufferUnionPolygon();
-        if (!unionFeat) {
-          setPill("bpEmpPill", "N/A", "na");
-          setPill("bpPopPill", "N/A", "na");
-          document.getElementById("bpEmpValue").textContent = "—";
-          document.getElementById("bpPopValue").textContent = "—";
-          return;
-        }
-
-        // Average population density = ACS population / union area (sq mi)
         const year = document.getElementById("yearSelect").value;
         const geoLevel = document.getElementById("geoLevel").value;
 
-        // union area in sq miles
-        const SQM_PER_SQMI = 2589988.110336;
-        const areaSqMi = turf.area(unionFeat) / SQM_PER_SQMI;
+        // Reset defaults
+        setPill("bpPopPill", "N/A", "na");
+        setPill("bpEmpPill", "N/A", "na");
+        setPill("bpLbarPill", "N/A", "na");
+        setPill("bpCrePill", "N/A", "na");
+        setPill("bpEssPill", "N/A", "na");
 
-        // Population total
+        document.getElementById("bpPopValue").textContent = "—";
+        document.getElementById("bpEmpValue").textContent = "—";
+        document.getElementById("bpLbarValue").textContent = "—";
+        document.getElementById("bpCreValue").textContent = "—";
+        document.getElementById("bpEssValue").textContent = "—";
+
+        document.getElementById("bpLbarNote").textContent = "Requires LBAR inventory + counties";
+        document.getElementById("bpCreNote").textContent = "Requires CRE (tract) upload";
+        document.getElementById("bpEssNote").textContent = "Requires essential services upload";
+
+        if (!unionFeat) return;
+
         try {
           setStatus("Computing breakpoint ratings…");
+
+          // --- Population density ---
+          const SQM_PER_SQMI = 2589988.110336;
+          const areaSqMi = turf.area(unionFeat) / SQM_PER_SQMI;
           const popRes = await computeAcsValueOnly("B01003_001E", year, geoLevel);
           const popTotal = popRes.value;
-          const popDensity = (Number.isFinite(popTotal) && Number.isFinite(areaSqMi) && areaSqMi > 0)
-            ? (popTotal / areaSqMi)
-            : NaN;
-
+          const popDensity = (Number.isFinite(popTotal) && Number.isFinite(areaSqMi) && areaSqMi > 0) ? (popTotal / areaSqMi) : NaN;
           document.getElementById("bpPopValue").textContent = Number.isFinite(popDensity)
             ? `${Math.round(popDensity).toLocaleString()} persons/sq mile`
             : "—";
-
-          const popClass = classify(popDensity, BP_POPDENS);
+          const popClass = classify(popDensity, BP.popDensity);
           setPill("bpPopPill", popClass.label, popClass.pill);
-        } catch (_) {
-          setPill("bpPopPill", "N/A", "na");
-          document.getElementById("bpPopValue").textContent = "—";
-        }
 
-        // Employment served by system (only if LODES loaded)
-        try {
-          if (!LODES_UPLOADED) {
-            setPill("bpEmpPill", "N/A", "na");
-            document.getElementById("bpEmpValue").textContent = "—";
-          } else {
+          // --- Employment served ---
+          if (LODES_UPLOADED) {
             const empRes = await computeEmploymentServedOnly();
             const emp = empRes.value;
-
-            document.getElementById("bpEmpValue").textContent = Number.isFinite(emp)
-              ? emp.toLocaleString()
-              : "—";
-
-            const empClass = classify(emp, BP_EMPLOYMENT);
+            document.getElementById("bpEmpValue").textContent = Number.isFinite(emp) ? emp.toLocaleString() : "—";
+            const empClass = classify(emp, BP.employment);
             setPill("bpEmpPill", empClass.label, empClass.pill);
           }
-        } catch (_) {
-          setPill("bpEmpPill", "N/A", "na");
-          document.getElementById("bpEmpValue").textContent = "—";
+
+          // --- Community Risk (CRE) ---
+          if (CRE_MAP) {
+            const cre = await computeCommunityRiskFromCre();
+            const pct = cre.pct;
+            document.getElementById("bpCreValue").textContent = Number.isFinite(pct) ? `${pct.toFixed(2)}%` : "—";
+            const creClass = classify(pct, BP.communityRiskPct);
+            setPill("bpCrePill", creClass.label, creClass.pill);
+            document.getElementById("bpCreNote").textContent = `Used ${cre.used} intersecting tracts (area-apportioned).`;
+          }
+
+          // --- Essential services ---
+          if (ESS_POINTS && ESS_POINTS.length > 0 && points.length > 0) {
+            const ess = computeEssentialServicesAvg();
+            document.getElementById("bpEssValue").textContent = Number.isFinite(ess.avg) ? ess.avg.toFixed(2) : "—";
+            const essClass = classify(ess.avg, BP.essentialAvg);
+            setPill("bpEssPill", essClass.label, essClass.pill);
+            document.getElementById("bpEssNote").textContent = `1-mile buffers; ${points.length} stations; ${ESS_POINTS.length} service points loaded.`;
+          }
+
+          // --- LBAR ratio ---
+          if (LBAR_SITES && LBAR_SITES.length > 0) {
+            const lbar = await computeLbarRatio();
+            document.getElementById("bpLbarNote").textContent = lbar.note || "";
+            if (Number.isFinite(lbar.ratio)) {
+              document.getElementById("bpLbarValue").textContent =
+                `${lbar.ratio.toFixed(2)} (station share ${(lbar.shareStation*100).toFixed(2)}% / county share ${(lbar.shareCounty*100).toFixed(2)}%)`;
+
+              let cls = classify(lbar.ratio, BP.lbarRatio);
+
+              // Boost rule: if county share > 5%, bump one level (capped at High)
+              if (Number.isFinite(lbar.shareCounty) && lbar.shareCounty > 0.05) {
+                const bumpedLabel = bumpOneLevel(cls.label);
+                // Re-map pill class based on bumped label
+                const pillMap = { "Low":"low", "Medium-Low":"ml", "Medium":"med", "Medium-High":"mh", "High":"high" };
+                cls = { label: bumpedLabel, pill: pillMap[bumpedLabel] || cls.pill };
+                document.getElementById("bpLbarNote").textContent += " | Boost applied (county share > 5%).";
+              }
+
+              setPill("bpLbarPill", cls.label, cls.pill);
+            }
+          }
+        } catch (e) {
+          // Leave whatever computed; do not hard-fail the UI
+          console.error(e);
         } finally {
           setStatus("Ready");
         }
       }
 
       // ----------------------------
-      // Summary runners
+      // Main summary runner
       // ----------------------------
       async function runLodesEmploymentSummary(year) {
         const notesEl = document.getElementById("notes");
@@ -992,12 +1456,11 @@
           await runAcsSummary(varCode, year, geoLevel);
         }
 
-        // Update ratings after each run
         await updateBreakpointRatings();
       }
 
       // ----------------------------
-      // Init
+      // Init UI + events
       // ----------------------------
       map.on("load", () => {
         setStatus("Ready");
@@ -1008,7 +1471,10 @@
           setAggUI(getMeta(e.target.value));
         });
 
-        map.on("click", (e) => addStationPoint(e.lngLat.lng, e.lngLat.lat));
+        map.on("click", (e) => {
+          addStationPoint(e.lngLat.lng, e.lngLat.lat);
+          updateBreakpointRatings();
+        });
 
         document.getElementById("clear").addEventListener("click", () => {
           points = [];
@@ -1040,7 +1506,15 @@
           }
         });
 
-        // LODES download (opens official URL; user then uploads file)
+        // LBAR counties change should re-rate
+        document.getElementById("lbarCounties").addEventListener("input", () => {
+          // Debounce not necessary for short input
+          updateBreakpointRatings();
+        });
+
+        // ----------------------------
+        // LODES download + upload
+        // ----------------------------
         document.getElementById("downloadLodes").addEventListener("click", async () => {
           try {
             setStatus("Determining state…");
@@ -1062,7 +1536,6 @@
           }
         });
 
-        // LODES upload parsing
         document.getElementById("lodesFile").addEventListener("change", async (e) => {
           const file = e.target.files && e.target.files[0];
           if (!file) return;
@@ -1080,6 +1553,242 @@
             setLodesLoadedUI(false, "", 0);
             setStatus("Error");
             document.getElementById("lodesInfo").textContent = String(err && err.message ? err.message : err);
+            updateBreakpointRatings();
+          }
+        });
+
+        // ----------------------------
+        // CRE upload
+        // ----------------------------
+        document.getElementById("creFile").addEventListener("change", async (e) => {
+          const file = e.target.files && e.target.files[0];
+          if (!file) return;
+
+          try {
+            setStatus("Loading CRE CSV…");
+            const text = await file.text();
+            const parsed = parseCSVSimple(text);
+
+            CRE_HEADERS = parsed.headers;
+            CRE_ROWS = parsed.rows;
+
+            const sG = document.getElementById("creColGEOID");
+            const sT = document.getElementById("creColTotal");
+            const sH = document.getElementById("creColHigh");
+
+            fillSelect(sG, CRE_HEADERS, "Select GEOID column…");
+            fillSelect(sT, CRE_HEADERS, "Select total population column…");
+            fillSelect(sH, CRE_HEADERS, "Select high-risk population column…");
+
+            enableSelect(sG, true);
+            enableSelect(sT, true);
+            enableSelect(sH, true);
+
+            // Heuristic defaults
+            const guess = (cands) => CRE_HEADERS.find(h => cands.some(x => h.toLowerCase() === x)) || "";
+            sG.value = guess(["geoid", "geoid10", "tract_geoid", "tract"]);
+            sT.value = guess(["total", "total_pop", "population", "totpop", "pop"]);
+            sH.value = guess(["high_risk", "highrisk", "high_risk_pop", "risk3plus", "highrisk_pop"]);
+
+            function rebuildCre() {
+              if (!sG.value || !sT.value || !sH.value) {
+                CRE_MAP = null;
+                document.getElementById("creInfo").textContent = "Select required columns to enable CRE computations.";
+                updateBreakpointRatings();
+                return;
+              }
+              CRE_MAP = buildCreMapFromRows(sG.value, sT.value, sH.value);
+              document.getElementById("creInfo").textContent =
+                `Loaded ${file.name}: ${CRE_MAP.size.toLocaleString()} tract rows mapped.`;
+              updateBreakpointRatings();
+            }
+
+            sG.addEventListener("change", rebuildCre);
+            sT.addEventListener("change", rebuildCre);
+            sH.addEventListener("change", rebuildCre);
+
+            rebuildCre();
+            setStatus("Ready");
+          } catch (err) {
+            CRE_MAP = null;
+            CRE_HEADERS = [];
+            CRE_ROWS = [];
+            document.getElementById("creInfo").textContent = `Error: ${String(err && err.message ? err.message : err)}`;
+            setStatus("Error");
+            updateBreakpointRatings();
+          }
+        });
+
+        // ----------------------------
+        // Essential services upload
+        // ----------------------------
+        document.getElementById("essFile").addEventListener("change", async (e) => {
+          const file = e.target.files && e.target.files[0];
+          if (!file) return;
+
+          try {
+            setStatus("Loading essential services…");
+            const name = file.name.toLowerCase();
+
+            ESS_POINTS = null;
+            ESS_IS_GEOJSON = false;
+            ESS_HEADERS = [];
+            ESS_ROWS = [];
+
+            const latSel = document.getElementById("essColLat");
+            const lonSel = document.getElementById("essColLon");
+
+            if (name.endsWith(".json") || name.endsWith(".geojson")) {
+              const text = await file.text();
+              const obj = JSON.parse(text);
+              const pts = extractPointsFromGeoJSON(obj);
+              ESS_POINTS = pts;
+              ESS_IS_GEOJSON = true;
+
+              fillSelect(latSel, [], "N/A (GeoJSON)");
+              fillSelect(lonSel, [], "N/A (GeoJSON)");
+              enableSelect(latSel, false);
+              enableSelect(lonSel, false);
+
+              document.getElementById("essInfo").textContent = `Loaded ${file.name}: ${pts.length.toLocaleString()} points.`;
+            } else if (name.endsWith(".csv")) {
+              const text = await file.text();
+              const parsed = parseCSVSimple(text);
+              ESS_HEADERS = parsed.headers;
+              ESS_ROWS = parsed.rows;
+
+              fillSelect(latSel, ESS_HEADERS, "Select latitude column…");
+              fillSelect(lonSel, ESS_HEADERS, "Select longitude column…");
+              enableSelect(latSel, true);
+              enableSelect(lonSel, true);
+
+              const guess = (cands) => ESS_HEADERS.find(h => cands.some(x => h.toLowerCase() === x)) || "";
+              latSel.value = guess(["lat", "latitude", "y"]);
+              lonSel.value = guess(["lon", "longitude", "lng", "x"]);
+
+              function rebuildEss() {
+                if (!latSel.value || !lonSel.value) {
+                  ESS_POINTS = null;
+                  document.getElementById("essInfo").textContent = "Select lat/lon columns to enable essential services computations.";
+                  updateBreakpointRatings();
+                  return;
+                }
+                ESS_POINTS = buildPointsFromCsvRows(ESS_ROWS, latSel.value, lonSel.value);
+                document.getElementById("essInfo").textContent =
+                  `Loaded ${file.name}: ${ESS_POINTS.length.toLocaleString()} points from CSV.`;
+                updateBreakpointRatings();
+              }
+
+              latSel.addEventListener("change", rebuildEss);
+              lonSel.addEventListener("change", rebuildEss);
+              rebuildEss();
+            } else {
+              throw new Error("Unsupported file type. Upload .geojson/.json or .csv.");
+            }
+
+            setStatus("Ready");
+            updateBreakpointRatings();
+          } catch (err) {
+            ESS_POINTS = null;
+            document.getElementById("essInfo").textContent = `Error: ${String(err && err.message ? err.message : err)}`;
+            setStatus("Error");
+            updateBreakpointRatings();
+          }
+        });
+
+        // ----------------------------
+        // LBAR upload
+        // ----------------------------
+        document.getElementById("lbarFile").addEventListener("change", async (e) => {
+          const file = e.target.files && e.target.files[0];
+          if (!file) return;
+
+          try {
+            setStatus("Loading LBAR inventory…");
+            const name = file.name.toLowerCase();
+
+            LBAR_SITES = null;
+            LBAR_IS_GEOJSON = false;
+            LBAR_HEADERS = [];
+            LBAR_ROWS = [];
+
+            const latSel = document.getElementById("lbarColLat");
+            const lonSel = document.getElementById("lbarColLon");
+            const uniSel = document.getElementById("lbarColUnits");
+            const ctySel = document.getElementById("lbarColCounty");
+
+            if (name.endsWith(".json") || name.endsWith(".geojson")) {
+              const text = await file.text();
+              const obj = JSON.parse(text);
+              const sites = buildLbarSitesFromGeoJSON(obj);
+              LBAR_SITES = sites;
+              LBAR_IS_GEOJSON = true;
+
+              fillSelect(latSel, [], "N/A (GeoJSON)");
+              fillSelect(lonSel, [], "N/A (GeoJSON)");
+              fillSelect(uniSel, [], "N/A (GeoJSON)");
+              fillSelect(ctySel, [], "N/A (GeoJSON)");
+              enableSelect(latSel, false);
+              enableSelect(lonSel, false);
+              enableSelect(uniSel, false);
+              enableSelect(ctySel, false);
+
+              document.getElementById("lbarInfo").textContent =
+                `Loaded ${file.name}: ${sites.length.toLocaleString()} sites (expects properties.units and optional properties.county).`;
+              updateBreakpointRatings();
+            } else if (name.endsWith(".csv")) {
+              const text = await file.text();
+              const parsed = parseCSVSimple(text);
+              LBAR_HEADERS = parsed.headers;
+              LBAR_ROWS = parsed.rows;
+
+              fillSelect(latSel, LBAR_HEADERS, "Select latitude column…");
+              fillSelect(lonSel, LBAR_HEADERS, "Select longitude column…");
+              fillSelect(uniSel, LBAR_HEADERS, "Select units column…");
+              fillSelect(ctySel, LBAR_HEADERS, "(Optional) Select county FIPS column…");
+
+              enableSelect(latSel, true);
+              enableSelect(lonSel, true);
+              enableSelect(uniSel, true);
+              enableSelect(ctySel, true);
+
+              const guess = (cands) => LBAR_HEADERS.find(h => cands.some(x => h.toLowerCase() === x)) || "";
+              latSel.value = guess(["lat", "latitude", "y"]);
+              lonSel.value = guess(["lon", "longitude", "lng", "x"]);
+              uniSel.value = guess(["units", "lbar_units", "units_total", "count"]);
+              ctySel.value = guess(["county", "county_fips", "fips", "countyfp"]);
+
+              function rebuildLbar() {
+                if (!latSel.value || !lonSel.value || !uniSel.value) {
+                  LBAR_SITES = null;
+                  document.getElementById("lbarInfo").textContent = "Select required columns (lat/lon/units) to enable LBAR computations.";
+                  updateBreakpointRatings();
+                  return;
+                }
+                const countyCol = ctySel.value || null;
+                LBAR_SITES = buildLbarSitesFromCsvRows(LBAR_ROWS, latSel.value, lonSel.value, uniSel.value, countyCol);
+
+                const hasCounty = LBAR_SITES.some(s => s.county5 && s.county5.length === 5);
+                document.getElementById("lbarInfo").textContent =
+                  `Loaded ${file.name}: ${LBAR_SITES.length.toLocaleString()} sites. County FIPS present: ${hasCounty ? "Yes" : "No"}.`;
+
+                updateBreakpointRatings();
+              }
+
+              latSel.addEventListener("change", rebuildLbar);
+              lonSel.addEventListener("change", rebuildLbar);
+              uniSel.addEventListener("change", rebuildLbar);
+              ctySel.addEventListener("change", rebuildLbar);
+              rebuildLbar();
+            } else {
+              throw new Error("Unsupported file type. Upload .geojson/.json or .csv.");
+            }
+
+            setStatus("Ready");
+          } catch (err) {
+            LBAR_SITES = null;
+            document.getElementById("lbarInfo").textContent = `Error: ${String(err && err.message ? err.message : err)}`;
+            setStatus("Error");
             updateBreakpointRatings();
           }
         });
