@@ -3,17 +3,20 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>MapLibre Station Picker + Buffers + TIGERweb/ACS Sidebar (Sum vs Median-safe)</title>
+    <title>MapLibre Stations + Buffers + TIGERweb/ACS + LODES Employment (Prototype)</title>
 
-    <!-- MapLibre GL JS (CDN) -->
+    <!-- MapLibre GL JS -->
     <link
       href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css"
       rel="stylesheet"
     />
     <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 
-    <!-- Turf.js for browser-side buffering and spatial operations -->
+    <!-- Turf.js -->
     <script src="https://unpkg.com/@turf/turf@6.5.0/turf.min.js"></script>
+
+    <!-- pako for gzip inflate (LODES CSV.GZ) -->
+    <script src="https://unpkg.com/pako@2.1.0/dist/pako.min.js"></script>
 
     <style>
       :root {
@@ -27,20 +30,17 @@
 
       body { margin: 0; font-family: system-ui, sans-serif; background: var(--bg); }
       #app { display: flex; height: 100vh; width: 100vw; }
-
       #sidebar {
-        width: 380px;
+        width: 420px;
         border-right: 1px solid var(--border);
         padding: 12px 14px;
         overflow: auto;
         box-sizing: border-box;
       }
-
       #map { flex: 1; }
 
       h3 { margin: 8px 0 10px; font-size: 16px; }
       .muted { color: var(--muted); font-size: 13px; line-height: 1.35; }
-
       label { display:block; margin: 10px 0; font-size: 13px; }
       select, button {
         width: 100%;
@@ -50,7 +50,6 @@
         font: inherit;
       }
       button { cursor: pointer; }
-
       .btnRow { display:flex; gap:10px; }
       .btnRow button { width: 50%; }
 
@@ -84,10 +83,11 @@
       }
 
       .kv { font-size: 13px; }
-      .kv b { display:inline-block; min-width: 160px; }
+      .kv b { display:inline-block; min-width: 175px; }
       #total { font-size: 22px; font-weight: 700; margin-top: 6px; }
       hr { border: 0; border-top: 1px solid var(--border); margin: 12px 0; }
       .tiny { font-size: 12px; color: var(--muted); }
+      code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
     </style>
   </head>
 
@@ -95,7 +95,6 @@
     <div id="app">
       <div id="sidebar">
         <h3>Stations</h3>
-
         <div class="btnRow">
           <button id="undo">Delete last point</button>
           <button id="clear">Clear points</button>
@@ -115,14 +114,13 @@
 
         <hr />
 
-        <h3>Station-area Census (TIGERweb + ACS)</h3>
+        <h3>Station-area Data (TIGERweb + ACS + LODES)</h3>
         <p class="muted">
-          This computes either a <b>sum</b> (for count variables) or an <b>area-weighted average</b>
-          (for medians/ratios) within the <b>dissolved union</b> of all 0.5-mile buffers.
+          All summaries are computed within the <b>dissolved union</b> of all 0.5-mile buffers (avoids double counting).
         </p>
 
         <label>
-          Geography level
+          Geography level (for ACS only)
           <select id="geoLevel">
             <option value="tract">Census Tracts (faster)</option>
             <option value="bg">Block Groups (more detailed)</option>
@@ -130,61 +128,36 @@
         </label>
 
         <label>
-          ACS variable
-          <select id="acsVar">
-            <optgroup label="Land Use: Population & Households (Additive sums)">
-              <option value="B01003_001E">Total population (B01003_001E)</option>
-              <option value="B11001_001E">Total households (B11001_001E)</option>
-              <option value="B25001_001E">Total housing units (B25001_001E)</option>
-              <option value="B25002_001E">Occupied housing units (B25002_001E)</option>
-              <option value="B25002_003E">Vacant housing units (B25002_003E)</option>
+          Variable (ACS or LODES)
+          <select id="varSelect">
+            <optgroup label="Land Use (ACS: additive sums)">
+              <option value="B01003_001E">Total population (ACS B01003_001E)</option>
+              <option value="B11001_001E">Total households (ACS B11001_001E)</option>
+              <option value="B25001_001E">Total housing units (ACS B25001_001E)</option>
+              <option value="B25002_001E">Occupied housing units (ACS B25002_001E)</option>
+              <option value="B25002_003E">Vacant housing units (ACS B25002_003E)</option>
             </optgroup>
 
-            <optgroup label="Mobility / Transit-Dependent: Auto Ownership (Additive sums)">
-              <option value="B08201_002E">Zero-car households (B08201_002E)</option>
-              <option value="B08201_001E">HH by vehicles available (total) (B08201_001E)</option>
-              <option value="B25044_003E">Owner-occupied, no vehicle (B25044_003E)</option>
-              <option value="B25044_010E">Renter-occupied, no vehicle (B25044_010E)</option>
+            <optgroup label="Land Use / Employment (LODES: additive sum)">
+              <option value="LODES_WAC_C000">Total existing employment (LODES WAC C000)</option>
             </optgroup>
 
-            <optgroup label="Mobility / Transit-Dependent: Poverty (Additive sums)">
-              <option value="B17001_002E">Persons below poverty level (B17001_002E)</option>
-              <option value="B17001_001E">Total persons (poverty universe) (B17001_001E)</option>
+            <optgroup label="Mobility / Transit-dependent (ACS: additive sums)">
+              <option value="B08201_002E">Zero-car households (ACS B08201_002E)</option>
+              <option value="B17001_002E">Persons below poverty level (ACS B17001_002E)</option>
             </optgroup>
 
-            <optgroup label="Economic Development: Housing Burden (Additive sums)">
-              <option value="B25070_001E">Gross rent as % income (total) (B25070_001E)</option>
-              <option value="B25070_007E">Rent burden 30–34.9% (B25070_007E)</option>
-              <option value="B25070_008E">Rent burden 35–39.9% (B25070_008E)</option>
-              <option value="B25070_009E">Rent burden 40–49.9% (B25070_009E)</option>
-              <option value="B25070_010E">Rent burden 50%+ (B25070_010E)</option>
-            </optgroup>
-
-            <optgroup label="Economic Development: Tenure (Additive sums)">
-              <option value="B25003_002E">Owner-occupied units (B25003_002E)</option>
-              <option value="B25003_003E">Renter-occupied units (B25003_003E)</option>
-            </optgroup>
-
-            <optgroup label="Travel Behavior Context (Additive sums)">
-              <option value="B08301_001E">Means of transportation to work (total) (B08301_001E)</option>
-              <option value="B08301_010E">Public transportation to work (B08301_010E)</option>
-              <option value="B08301_019E">Worked at home (B08301_019E)</option>
-            </optgroup>
-
-            <optgroup label="Non-additive (Medians / Averages: shown as area-weighted average estimate)">
-              <option value="B19013_001E">Median household income (B19013_001E) ⚠</option>
-              <option value="B19301_001E">Per capita income (B19301_001E) ⚠</option>
-              <option value="B25064_001E">Median gross rent (B25064_001E) ⚠</option>
-              <option value="B25058_001E">Median contract rent (B25058_001E) ⚠</option>
-              <option value="B25077_001E">Median home value (B25077_001E) ⚠</option>
-              <option value="B25071_001E">Median gross rent as % of HH income (B25071_001E) ⚠</option>
+            <optgroup label="Non-additive (ACS medians: shown as area-weighted average estimate)">
+              <option value="B19013_001E">Median household income (ACS B19013_001E) ⚠</option>
+              <option value="B25064_001E">Median gross rent (ACS B25064_001E) ⚠</option>
+              <option value="B25077_001E">Median home value (ACS B25077_001E) ⚠</option>
             </optgroup>
           </select>
         </label>
 
         <label>
-          ACS year (5-year)
-          <select id="acsYear">
+          Year
+          <select id="yearSelect">
             <option value="2023">2023</option>
             <option value="2022">2022</option>
             <option value="2021">2021</option>
@@ -203,9 +176,15 @@
           <div id="notes" class="tiny" style="margin-top:6px;"></div>
         </div>
 
-        <div class="tiny" style="margin-top:10px;">
-          Notes: TIGERweb provides geometry + GEOIDs; ACS API provides values.
-          For non-additive variables (medians/ratios), this tool reports an <b>area-weighted average</b> estimate, not a true median.
+        <div class="warn" style="margin-top:10px;">
+          <b>LODES performance note (prototype):</b>
+          This page can fetch and parse statewide <code>.csv.gz</code> LODES WAC files in your browser. Some states’ files are large and may be slow
+          or memory-intensive on laptops. For production, use a backend or preprocessed tiles/Parquet.
+        </div>
+
+        <div class="card">
+          <div class="kv"><b>LODES cache:</b> <span id="lodesCache">None</span></div>
+          <div class="kv"><b>Detected state:</b> <span id="lodesState">—</span></div>
         </div>
       </div>
 
@@ -214,7 +193,7 @@
 
     <script>
       // ----------------------------
-      // Basemap (OSM raster)
+      // Basemap
       // ----------------------------
       const rasterStyle = {
         version: 8,
@@ -243,93 +222,12 @@
 
       map.addControl(new maplibregl.NavigationControl(), "top-right");
 
-      // ----------------------------
-      // Variable aggregation metadata
-      // agg:
-      //   - "sum"  => area-weighted apportionment then sum (appropriate for counts/totals)
-      //   - "avg"  => area-weighted average (approximation for medians/ratios/non-additive)
-      // fmt:
-      //   - "int"  => integer display
-      //   - "usd"  => dollars
-      //   - "pct"  => percent (0-100 scale in ACS medians like B25071_001E is already percent; keep numeric)
-      // ----------------------------
-      const ACS_META = {
-        // Additive sums (counts/totals)
-        "B01003_001E": { agg: "sum", fmt: "int", label: "Total population" },
-        "B11001_001E": { agg: "sum", fmt: "int", label: "Total households" },
-        "B25001_001E": { agg: "sum", fmt: "int", label: "Total housing units" },
-        "B25002_001E": { agg: "sum", fmt: "int", label: "Occupied housing units" },
-        "B25002_003E": { agg: "sum", fmt: "int", label: "Vacant housing units" },
-
-        "B08201_002E": { agg: "sum", fmt: "int", label: "Zero-car households" },
-        "B08201_001E": { agg: "sum", fmt: "int", label: "HH by vehicles available (total)" },
-        "B25044_003E": { agg: "sum", fmt: "int", label: "Owner-occupied, no vehicle" },
-        "B25044_010E": { agg: "sum", fmt: "int", label: "Renter-occupied, no vehicle" },
-
-        "B17001_002E": { agg: "sum", fmt: "int", label: "Persons below poverty level" },
-        "B17001_001E": { agg: "sum", fmt: "int", label: "Total persons (poverty universe)" },
-
-        "B25070_001E": { agg: "sum", fmt: "int", label: "Gross rent as % income (total count)" },
-        "B25070_007E": { agg: "sum", fmt: "int", label: "Rent burden 30–34.9% (count)" },
-        "B25070_008E": { agg: "sum", fmt: "int", label: "Rent burden 35–39.9% (count)" },
-        "B25070_009E": { agg: "sum", fmt: "int", label: "Rent burden 40–49.9% (count)" },
-        "B25070_010E": { agg: "sum", fmt: "int", label: "Rent burden 50%+ (count)" },
-
-        "B25003_002E": { agg: "sum", fmt: "int", label: "Owner-occupied units" },
-        "B25003_003E": { agg: "sum", fmt: "int", label: "Renter-occupied units" },
-
-        "B08301_001E": { agg: "sum", fmt: "int", label: "Commute mode (total workers)" },
-        "B08301_010E": { agg: "sum", fmt: "int", label: "Public transit to work (count)" },
-        "B08301_019E": { agg: "sum", fmt: "int", label: "Worked at home (count)" },
-
-        // Non-additive medians/ratios (approx only)
-        "B19013_001E": { agg: "avg", fmt: "usd", label: "Median household income" },
-        "B19301_001E": { agg: "avg", fmt: "usd", label: "Per capita income" },
-        "B25064_001E": { agg: "avg", fmt: "usd", label: "Median gross rent" },
-        "B25058_001E": { agg: "avg", fmt: "usd", label: "Median contract rent" },
-        "B25077_001E": { agg: "avg", fmt: "usd", label: "Median home value" },
-        "B25071_001E": { agg: "avg", fmt: "pct", label: "Median gross rent as % of HH income" }
-      };
-
-      function getAcsMeta(varCode) {
-        return ACS_META[varCode] || { agg: "sum", fmt: "int", label: varCode };
-      }
-
       function setStatus(s) {
         document.getElementById("status").textContent = s;
       }
 
-      function setAggUI(meta) {
-        const aggMethodEl = document.getElementById("aggMethod");
-        const warnEl = document.getElementById("aggWarning");
-
-        if (meta.agg === "sum") {
-          aggMethodEl.textContent = "Sum (area-apportioned counts)";
-          warnEl.style.display = "none";
-          warnEl.textContent = "";
-        } else {
-          aggMethodEl.textContent = "Area-weighted average (approximation)";
-          warnEl.style.display = "block";
-          warnEl.textContent =
-            "Selected variable is non-additive (e.g., median/ratio). This tool reports an area-weighted average estimate, not a true median/ratio for the station area. For a more defensible value, compute from underlying distributions (requires additional ACS tables and logic).";
-        }
-      }
-
-      function formatValue(val, meta) {
-        if (!Number.isFinite(val)) return "—";
-        if (meta.fmt === "usd") {
-          return val.toLocaleString(undefined, { style: "currency", currency: "USD", maximumFractionDigits: 0 });
-        }
-        if (meta.fmt === "pct") {
-          // ACS median % tables are usually already in percent units
-          return val.toLocaleString(undefined, { maximumFractionDigits: 1 }) + "%";
-        }
-        // default int
-        return val.toLocaleString(undefined, { maximumFractionDigits: 0 });
-      }
-
       // ----------------------------
-      // Station points + 0.5-mile buffers
+      // Station points + buffers
       // ----------------------------
       let points = [];
       let buffers = [];
@@ -337,7 +235,6 @@
       function pointsGeoJSON() {
         return { type: "FeatureCollection", features: points };
       }
-
       function buffersGeoJSON() {
         return { type: "FeatureCollection", features: buffers };
       }
@@ -348,8 +245,7 @@
           const [lon, lat] = f.geometry.coordinates;
           return `${i + 1}\t${lat.toFixed(6)}\t${lon.toFixed(6)}`;
         });
-        const header = "idx\tlat\tlon\n";
-        document.getElementById("coords").textContent = header + lines.join("\n");
+        document.getElementById("coords").textContent = "idx\tlat\tlon\n" + lines.join("\n");
       }
 
       function renderStationLayers() {
@@ -359,7 +255,6 @@
         const bufFillLayer = "buffers-fill";
         const bufLineLayer = "buffers-line";
 
-        // Buffers
         if (!map.getSource(bufSrc)) {
           map.addSource(bufSrc, { type: "geojson", data: buffersGeoJSON() });
 
@@ -380,7 +275,6 @@
           map.getSource(bufSrc).setData(buffersGeoJSON());
         }
 
-        // Points
         if (!map.getSource(ptsSrc)) {
           map.addSource(ptsSrc, { type: "geojson", data: pointsGeoJSON() });
 
@@ -404,7 +298,6 @@
 
       function addStationPoint(lon, lat) {
         const idx = points.length + 1;
-
         points.push({
           type: "Feature",
           properties: { name: `Station ${idx}`, stationIdx: idx },
@@ -418,9 +311,7 @@
         renderStationLayers();
       }
 
-      // ----------------------------
-      // Dissolve buffers into a union polygon (to avoid double counting)
-      // ----------------------------
+      // Dissolve buffer union
       function bufferUnionPolygon() {
         if (buffers.length === 0) return null;
         let u = buffers[0];
@@ -431,12 +322,107 @@
       }
 
       function bboxStringFromFeature(feat) {
-        const b = turf.bbox(feat);
-        return b.join(",");
+        return turf.bbox(feat).join(",");
       }
 
       // ----------------------------
-      // TIGERweb fetch: Tracts or Block Groups intersecting the union polygon
+      // Variable metadata
+      // ----------------------------
+      const VAR_META = {
+        // ACS sums
+        "B01003_001E": { source: "ACS", agg: "sum", fmt: "int", label: "Total population" },
+        "B11001_001E": { source: "ACS", agg: "sum", fmt: "int", label: "Total households" },
+        "B25001_001E": { source: "ACS", agg: "sum", fmt: "int", label: "Total housing units" },
+        "B25002_001E": { source: "ACS", agg: "sum", fmt: "int", label: "Occupied housing units" },
+        "B25002_003E": { source: "ACS", agg: "sum", fmt: "int", label: "Vacant housing units" },
+        "B08201_002E": { source: "ACS", agg: "sum", fmt: "int", label: "Zero-car households" },
+        "B17001_002E": { source: "ACS", agg: "sum", fmt: "int", label: "Persons below poverty level" },
+
+        // ACS non-additive (approx)
+        "B19013_001E": { source: "ACS", agg: "avg", fmt: "usd", label: "Median household income" },
+        "B25064_001E": { source: "ACS", agg: "avg", fmt: "usd", label: "Median gross rent" },
+        "B25077_001E": { source: "ACS", agg: "avg", fmt: "usd", label: "Median home value" },
+
+        // LODES employment
+        "LODES_WAC_C000": { source: "LODES", agg: "sum", fmt: "int", label: "Total existing employment (WAC C000)" }
+      };
+
+      function getMeta(code) {
+        return VAR_META[code] || { source: "ACS", agg: "sum", fmt: "int", label: code };
+      }
+
+      function setAggUI(meta) {
+        const aggMethodEl = document.getElementById("aggMethod");
+        const warnEl = document.getElementById("aggWarning");
+
+        if (meta.source === "LODES") {
+          aggMethodEl.textContent = "Sum (jobs in intersecting blocks; centroid-in-polygon)";
+          warnEl.style.display = "block";
+          warnEl.innerHTML =
+            "<b>LODES method:</b> Sums LODES WAC jobs (C000) for blocks whose internal point falls within the dissolved 0.5-mile buffer union. " +
+            "This is a screening-grade approach. For higher rigor, use block polygon overlap apportionment and/or a backend pipeline.";
+          return;
+        }
+
+        if (meta.agg === "sum") {
+          aggMethodEl.textContent = "Sum (area-apportioned counts)";
+          warnEl.style.display = "none";
+          warnEl.textContent = "";
+        } else {
+          aggMethodEl.textContent = "Area-weighted average (approximation)";
+          warnEl.style.display = "block";
+          warnEl.textContent =
+            "Selected variable is non-additive (e.g., median). This tool reports an area-weighted average estimate, not a true median. " +
+            "For a more defensible value, compute from distributions (additional ACS tables required).";
+        }
+      }
+
+      function formatValue(val, meta) {
+        if (!Number.isFinite(val)) return "—";
+        if (meta.fmt === "usd") {
+          return val.toLocaleString(undefined, { style: "currency", currency: "USD", maximumFractionDigits: 0 });
+        }
+        return val.toLocaleString(undefined, { maximumFractionDigits: 0 });
+      }
+
+      // ----------------------------
+      // TIGERweb overlay (tract/bg)
+      // ----------------------------
+      function renderCensusOverlay(geos) {
+        const srcId = "census-geos";
+        const fillId = "census-geos-fill";
+        const lineId = "census-geos-line";
+
+        const fc = { type: "FeatureCollection", features: geos };
+
+        if (!map.getSource(srcId)) {
+          map.addSource(srcId, { type: "geojson", data: fc });
+
+          // Put beneath station buffers
+          map.addLayer({
+            id: fillId,
+            type: "fill",
+            source: srcId,
+            paint: { "fill-color": "#111827", "fill-opacity": 0.08 }
+          }, "buffers-fill");
+
+          map.addLayer({
+            id: lineId,
+            type: "line",
+            source: srcId,
+            paint: { "line-color": "#111827", "line-width": 1, "line-opacity": 0.35 }
+          }, "buffers-fill");
+        } else {
+          map.getSource(srcId).setData(fc);
+        }
+      }
+
+      // ----------------------------
+      // TIGERweb fetch for tracts / block groups (GeoJSON)
+      // Tracts_Blocks MapServer:
+      //   0 = Census Tracts
+      //   1 = Census Block Groups
+      //   2 = 2020 Census Blocks
       // ----------------------------
       async function fetchTigerwebGeos(geoLevel, unionFeat) {
         const bbox = bboxStringFromFeature(unionFeat);
@@ -456,7 +442,6 @@
         });
 
         const url = `${layerUrl}/query?${params.toString()}`;
-
         const resp = await fetch(url);
         if (!resp.ok) throw new Error(`TIGERweb error ${resp.status}`);
         const geojson = await resp.json();
@@ -465,7 +450,7 @@
       }
 
       // ----------------------------
-      // ACS API fetch: values for chosen variable
+      // ACS API fetch
       // ----------------------------
       function parseGEOID(geoLevel, geoid) {
         const state = geoid.slice(0, 2);
@@ -483,7 +468,7 @@
           if (!groups.has(key)) groups.set(key, { state: p.state, county: p.county });
         }
 
-        const results = new Map(); // GEOID -> value
+        const results = new Map();
         const base = `https://api.census.gov/data/${year}/acs/acs5`;
 
         for (const { state, county } of groups.values()) {
@@ -508,10 +493,7 @@
           for (let i = 1; i < rows.length; i++) {
             const r = rows[i];
             const raw = r[idxVar];
-
-            // Some ACS cells can be null; Number(null) => 0 (undesired). Treat as missing.
             if (raw === null || raw === undefined || raw === "") continue;
-
             const val = Number(raw);
             if (!Number.isFinite(val)) continue;
 
@@ -529,16 +511,10 @@
             }
           }
         }
-
         return results;
       }
 
-      // ----------------------------
-      // Aggregation:
-      // - sum: Σ (value * overlap_fraction)
-      // - avg: Σ (value * overlap_fraction) / Σ (overlap_fraction)
-      // ----------------------------
-      function aggregateWithinUnion(unionFeat, geos, acsMap, aggMode) {
+      function aggregateWithinUnion(unionFeat, geos, valueMap, aggMode) {
         let numerator = 0;
         let denom = 0;
         let used = 0;
@@ -546,8 +522,7 @@
         for (const f of geos) {
           const geoid = f.properties && f.properties.GEOID;
           if (!geoid) continue;
-
-          const v = acsMap.get(geoid);
+          const v = valueMap.get(geoid);
           if (v == null) continue;
 
           const inter = turf.intersect(f, unionFeat);
@@ -564,56 +539,163 @@
         }
 
         if (aggMode === "avg") {
-          return {
-            value: (denom > 0) ? (numerator / denom) : NaN,
-            used,
-            weightSum: denom
-          };
+          return { value: denom > 0 ? (numerator / denom) : NaN, used, weightSum: denom };
         }
-
-        // sum
-        return {
-          value: numerator,
-          used,
-          weightSum: denom
-        };
+        return { value: numerator, used, weightSum: denom };
       }
 
       // ----------------------------
-      // Map overlay for TIGERweb geographies
+      // LODES: detect state at map center via TIGERweb Blocks (layer 2)
+      // Then fetch/parse LODES WAC file for that state/year and sum C000 for blocks in union.
       // ----------------------------
-      function renderCensusOverlay(geos) {
-        const srcId = "census-geos";
-        const fillId = "census-geos-fill";
-        const lineId = "census-geos-line";
+      const STATE_FIPS_TO_ABBR = {
+        "01":"al","02":"ak","04":"az","05":"ar","06":"ca","08":"co","09":"ct","10":"de","11":"dc","12":"fl",
+        "13":"ga","15":"hi","16":"id","17":"il","18":"in","19":"ia","20":"ks","21":"ky","22":"la","23":"me",
+        "24":"md","25":"ma","26":"mi","27":"mn","28":"ms","29":"mo","30":"mt","31":"ne","32":"nv","33":"nh",
+        "34":"nj","35":"nm","36":"ny","37":"nc","38":"nd","39":"oh","40":"ok","41":"or","42":"pa","44":"ri",
+        "45":"sc","46":"sd","47":"tn","48":"tx","49":"ut","50":"vt","51":"va","53":"wa","54":"wv","55":"wi","56":"wy",
+        "72":"pr"
+      };
 
-        const fc = { type: "FeatureCollection", features: geos };
+      async function getStateFromMapCenter() {
+        const c = map.getCenter();
+        const layerUrl = "https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/Tracts_Blocks/MapServer/2";
 
-        if (!map.getSource(srcId)) {
-          map.addSource(srcId, { type: "geojson", data: fc });
+        const params = new URLSearchParams({
+          f: "geojson",
+          where: "1=1",
+          outFields: "GEOID",
+          geometry: `${c.lng},${c.lat}`,
+          geometryType: "esriGeometryPoint",
+          inSR: "4326",
+          spatialRel: "esriSpatialRelIntersects",
+          outSR: "4326",
+          returnGeometry: "false",
+          resultRecordCount: "1"
+        });
 
-          map.addLayer({
-            id: fillId,
-            type: "fill",
-            source: srcId,
-            paint: { "fill-color": "#111827", "fill-opacity": 0.08 }
-          }, "buffers-fill");
+        const url = `${layerUrl}/query?${params.toString()}`;
+        const resp = await fetch(url);
+        if (!resp.ok) throw new Error(`TIGERweb block lookup failed (${resp.status})`);
+        const gj = await resp.json();
 
-          map.addLayer({
-            id: lineId,
-            type: "line",
-            source: srcId,
-            paint: { "line-color": "#111827", "line-width": 1, "line-opacity": 0.35 }
-          }, "buffers-fill");
-        } else {
-          map.getSource(srcId).setData(fc);
-        }
+        const feat = gj.features && gj.features[0];
+        const geoid = feat && feat.properties && feat.properties.GEOID;
+        if (!geoid || geoid.length < 2) throw new Error("Could not infer state from TIGERweb GEOID.");
+        const stateFips = geoid.slice(0, 2);
+        const abbr = STATE_FIPS_TO_ABBR[stateFips];
+        if (!abbr) throw new Error(`Unsupported/unknown state FIPS: ${stateFips}`);
+        return { stateFips, abbr };
       }
 
-      // ----------------------------
-      // Sidebar action: Update summary
-      // ----------------------------
-      async function runCensusSummary() {
+      // LODES cache: key -> Map(w_geocode -> C000)
+      // This can be large; for prototype only.
+      const LODES_CACHE = new Map(); // key = `${abbr}_${year}`
+
+      function updateLodesCacheUI() {
+        const el = document.getElementById("lodesCache");
+        if (LODES_CACHE.size === 0) {
+          el.textContent = "None";
+          return;
+        }
+        el.textContent = Array.from(LODES_CACHE.keys()).join(", ");
+      }
+
+      async function fetchAndParseLodesWac(abbr, year) {
+        const cacheKey = `${abbr}_${year}`;
+        if (LODES_CACHE.has(cacheKey)) return LODES_CACHE.get(cacheKey);
+
+        // WAC all jobs: segment S000, job type JT00
+        const url = `https://lehd.ces.census.gov/data/lodes/LODES8/${abbr}/wac/${abbr}_wac_S000_JT00_${year}.csv.gz`;
+
+        // Optional: HEAD to show size (may be blocked on some servers; ignore if fails)
+        try { await fetch(url, { method: "HEAD" }); } catch (_) {}
+
+        setStatus(`Fetching LODES ${abbr.toUpperCase()} ${year}…`);
+        const resp = await fetch(url);
+        if (!resp.ok) throw new Error(`LODES download failed (${resp.status}) for ${abbr.toUpperCase()} ${year}`);
+
+        const gz = new Uint8Array(await resp.arrayBuffer());
+
+        setStatus("Decompressing LODES (gzip)…");
+        // Inflate to string. This can be memory-heavy on large states.
+        const csvText = pako.ungzip(gz, { to: "string" });
+
+        setStatus("Parsing LODES CSV…");
+        const mapJobs = new Map(); // w_geocode -> C000
+
+        // Minimal CSV parsing: LODES fields have no quoted commas; safe to split by comma.
+        // We only need: w_geocode, C000
+        const lines = csvText.split(/\r?\n/);
+        if (lines.length < 2) throw new Error("LODES CSV appears empty.");
+
+        const header = lines[0].split(",");
+        const idxGeo = header.indexOf("w_geocode");
+        const idxC000 = header.indexOf("C000");
+        if (idxGeo === -1 || idxC000 === -1) {
+          throw new Error("LODES CSV missing expected columns (w_geocode, C000).");
+        }
+
+        for (let i = 1; i < lines.length; i++) {
+          const line = lines[i];
+          if (!line) continue;
+          const parts = line.split(",");
+          const g = parts[idxGeo];
+          const c = parts[idxC000];
+          if (!g || c === undefined) continue;
+          const v = Number(c);
+          if (!Number.isFinite(v)) continue;
+          mapJobs.set(g, v);
+        }
+
+        LODES_CACHE.set(cacheKey, mapJobs);
+        updateLodesCacheUI();
+        return mapJobs;
+      }
+
+      async function fetchBlocksInternalPointsInUnion(unionFeat) {
+        // Query 2020 blocks within bbox, return GEOID and INTPTLAT/INTPTLON (internal point)
+        const bbox = bboxStringFromFeature(unionFeat);
+        const layerUrl = "https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/Tracts_Blocks/MapServer/2";
+
+        const params = new URLSearchParams({
+          where: "1=1",
+          outFields: "GEOID,INTPTLAT,INTPTLON",
+          geometry: bbox,
+          geometryType: "esriGeometryEnvelope",
+          inSR: "4326",
+          spatialRel: "esriSpatialRelIntersects",
+          outSR: "4326",
+          returnGeometry: "false",
+          f: "geojson"
+        });
+
+        const url = `${layerUrl}/query?${params.toString()}`;
+        setStatus("Querying TIGERweb blocks…");
+        const resp = await fetch(url);
+        if (!resp.ok) throw new Error(`TIGERweb block bbox query failed (${resp.status})`);
+        const gj = await resp.json();
+
+        // Build set of GEOIDs whose internal point is inside union polygon
+        setStatus("Filtering blocks within union…");
+        const inside = new Set();
+        for (const f of (gj.features || [])) {
+          const p = f.properties || {};
+          const geoid = p.GEOID;
+          const lat = Number(p.INTPTLAT);
+          const lon = Number(p.INTPTLON);
+          if (!geoid || !Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+
+          const pt = turf.point([lon, lat]);
+          if (turf.booleanPointInPolygon(pt, unionFeat)) {
+            // LODES uses 15-digit block GEOID; TIGERweb GEOID is typically 15 for blocks
+            inside.add(String(geoid));
+          }
+        }
+        return inside;
+      }
+
+      async function runLodesEmploymentSummary(year) {
         const notesEl = document.getElementById("notes");
         const totalEl = document.getElementById("total");
         const nGeosEl = document.getElementById("nGeos");
@@ -622,9 +704,54 @@
         totalEl.textContent = "—";
         nGeosEl.textContent = "0";
 
-        const varCode = document.getElementById("acsVar").value;
-        const meta = getAcsMeta(varCode);
-        setAggUI(meta);
+        const unionFeat = bufferUnionPolygon();
+        if (!unionFeat) {
+          setStatus("No stations yet");
+          notesEl.textContent = "Add at least one station to compute employment served.";
+          return;
+        }
+
+        setStatus("Determining state…");
+        const { abbr, stateFips } = await getStateFromMapCenter();
+        document.getElementById("lodesState").textContent = `${abbr.toUpperCase()} (FIPS ${stateFips})`;
+
+        const blocksInside = await fetchBlocksInternalPointsInUnion(unionFeat);
+        nGeosEl.textContent = String(blocksInside.size);
+
+        // Fetch + parse LODES WAC
+        const jobsMap = await fetchAndParseLodesWac(abbr, year);
+
+        setStatus("Summing jobs within union…");
+        let sum = 0;
+        let matched = 0;
+
+        for (const geoid of blocksInside) {
+          const v = jobsMap.get(geoid);
+          if (v != null) {
+            sum += v;
+            matched++;
+          }
+        }
+
+        totalEl.textContent = sum.toLocaleString(undefined, { maximumFractionDigits: 0 });
+        notesEl.textContent =
+          `LODES WAC C000 summed for ${matched.toLocaleString()} blocks (of ${blocksInside.size.toLocaleString()} in union bbox-filter) within dissolved 0.5-mile buffers; ${abbr.toUpperCase()} ${year}.`;
+
+        setStatus("Done");
+      }
+
+      // ----------------------------
+      // Run ACS summary
+      // ----------------------------
+      async function runAcsSummary(varCode, year, geoLevel) {
+        const meta = getMeta(varCode);
+        const notesEl = document.getElementById("notes");
+        const totalEl = document.getElementById("total");
+        const nGeosEl = document.getElementById("nGeos");
+
+        notesEl.textContent = "";
+        totalEl.textContent = "—";
+        nGeosEl.textContent = "0";
 
         const unionFeat = bufferUnionPolygon();
         if (!unionFeat) {
@@ -633,13 +760,9 @@
           return;
         }
 
-        const geoLevel = document.getElementById("geoLevel").value;
-        const year = document.getElementById("acsYear").value;
-
         setStatus("Querying TIGERweb…");
         const geos = await fetchTigerwebGeos(geoLevel, unionFeat);
         nGeosEl.textContent = String(geos.length);
-
         renderCensusOverlay(geos);
 
         if (geos.length === 0) {
@@ -650,23 +773,38 @@
 
         setStatus("Fetching ACS values…");
         const geoids = geos.map(f => f.properties.GEOID).filter(Boolean);
-        const acsMap = await fetchACSValues(geoLevel, year, varCode, geoids);
+        const valueMap = await fetchACSValues(geoLevel, year, varCode, geoids);
 
         setStatus("Aggregating…");
-        const { value, used, weightSum } = aggregateWithinUnion(unionFeat, geos, acsMap, meta.agg);
-
+        const { value, used, weightSum } = aggregateWithinUnion(unionFeat, geos, valueMap, meta.agg);
         totalEl.textContent = formatValue(value, meta);
 
         const geoLabel = (geoLevel === "tract") ? "tracts" : "block groups";
         if (meta.agg === "sum") {
-          notesEl.textContent =
-            `Sum of area-apportioned counts using ${used} intersecting ${geoLabel}; ACS ${year} 5-year.`;
+          notesEl.textContent = `Sum of area-apportioned counts using ${used} intersecting ${geoLabel}; ACS ${year} 5-year.`;
         } else {
-          notesEl.textContent =
-            `Area-weighted average estimate using ${used} intersecting ${geoLabel} (weight sum=${weightSum.toFixed(2)}); ACS ${year} 5-year.`;
+          notesEl.textContent = `Area-weighted average estimate using ${used} intersecting ${geoLabel} (weight sum=${weightSum.toFixed(2)}); ACS ${year} 5-year.`;
         }
 
         setStatus("Done");
+      }
+
+      // ----------------------------
+      // Main dispatcher
+      // ----------------------------
+      async function runSummary() {
+        const varCode = document.getElementById("varSelect").value;
+        const year = document.getElementById("yearSelect").value;
+        const geoLevel = document.getElementById("geoLevel").value;
+
+        const meta = getMeta(varCode);
+        setAggUI(meta);
+
+        if (meta.source === "LODES") {
+          await runLodesEmploymentSummary(year);
+        } else {
+          await runAcsSummary(varCode, year, geoLevel);
+        }
       }
 
       // ----------------------------
@@ -675,18 +813,16 @@
       map.on("load", () => {
         setStatus("Ready");
         renderStationLayers();
+        updateLodesCacheUI();
 
-        // Initialize aggregation UI based on default variable
-        setAggUI(getAcsMeta(document.getElementById("acsVar").value));
+        // Initialize agg UI
+        setAggUI(getMeta(document.getElementById("varSelect").value));
 
-        // Update aggregation UI whenever variable changes
-        document.getElementById("acsVar").addEventListener("change", (e) => {
-          setAggUI(getAcsMeta(e.target.value));
+        document.getElementById("varSelect").addEventListener("change", (e) => {
+          setAggUI(getMeta(e.target.value));
         });
 
-        map.on("click", (e) => {
-          addStationPoint(e.lngLat.lng, e.lngLat.lat);
-        });
+        map.on("click", (e) => addStationPoint(e.lngLat.lng, e.lngLat.lat));
 
         document.getElementById("clear").addEventListener("click", () => {
           points = [];
@@ -709,7 +845,7 @@
 
         document.getElementById("run").addEventListener("click", async () => {
           try {
-            await runCensusSummary();
+            await runSummary();
           } catch (e) {
             setStatus("Error");
             document.getElementById("notes").textContent = String(e && e.message ? e.message : e);
