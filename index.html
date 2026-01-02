@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>MapLibre on GitHub Pages</title>
+    <title>MapLibre Station Picker (Points + 1/2-mile Buffers)</title>
 
     <!-- MapLibre GL JS (CDN) -->
     <link
@@ -11,15 +11,24 @@
       rel="stylesheet"
     />
     <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
-    <script src="https://unpkg.com/@turf/turf@6.5.0/turf.min.js"></script>
 
+    <!-- Turf.js for browser-side buffering -->
+    <script src="https://unpkg.com/@turf/turf@6.5.0/turf.min.js"></script>
 
     <style>
       body { margin: 0; font-family: system-ui, sans-serif; }
       #map { height: 70vh; width: 100vw; }
       #panel { padding: 12px 16px; }
-      #coords { white-space: pre; background: #f6f8fa; padding: 12px; border-radius: 8px; overflow: auto; }
+      #coords {
+        white-space: pre;
+        background: #f6f8fa;
+        padding: 12px;
+        border-radius: 8px;
+        overflow: auto;
+      }
       button { padding: 8px 10px; cursor: pointer; }
+      .row { display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+      .muted { color: #555; }
     </style>
   </head>
 
@@ -27,11 +36,16 @@
     <div id="map"></div>
 
     <div id="panel">
-      <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
+      <div class="row">
         <strong>Click the map to add station points</strong>
         <button id="undo">Delete last point</button>
         <button id="clear">Clear points</button>
       </div>
+
+      <p class="muted">
+        Each click adds a station point and a semi-transparent <b>0.5-mile</b> radial buffer.
+      </p>
+
       <p>Lat/Lon list (copy into CSV, etc.):</p>
       <div id="coords"></div>
     </div>
@@ -54,9 +68,7 @@
               '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
           }
         },
-        layers: [
-          { id: "osm", type: "raster", source: "osm" }
-        ]
+        layers: [{ id: "osm", type: "raster", source: "osm" }]
       };
 
       const map = new maplibregl.Map({
@@ -68,29 +80,36 @@
 
       map.addControl(new maplibregl.NavigationControl(), "top-right");
 
-      // Store points as GeoJSON features
+      // Store points and corresponding 1/2-mile buffers as GeoJSON features
       let points = [];
+      let buffers = [];
 
       function pointsGeoJSON() {
-        return {
-          type: "FeatureCollection",
-          features: points
-        };
+        return { type: "FeatureCollection", features: points };
       }
 
-      let buffers = [];
       function buffersGeoJSON() {
         return { type: "FeatureCollection", features: buffers };
       }
 
-      function renderPoints() {
+      function updateCoordsPanel() {
+        const lines = points.map((f, i) => {
+          const [lon, lat] = f.geometry.coordinates;
+          return `${i + 1}\t${lat.toFixed(6)}\t${lon.toFixed(6)}`;
+        });
+        const header = "idx\tlat\tlon\n";
+        document.getElementById("coords").textContent = header + lines.join("\n");
+      }
+
+      function renderLayers() {
         const ptsSrc = "stations";
         const ptsLayer = "stations-layer";
+
         const bufSrc = "buffers";
         const bufFillLayer = "buffers-fill";
         const bufLineLayer = "buffers-line";
 
-  // --- Buffers ---
+        // --- Buffers ---
         if (!map.getSource(bufSrc)) {
           map.addSource(bufSrc, { type: "geojson", data: buffersGeoJSON() });
 
@@ -104,83 +123,88 @@
             }
           });
 
-      map.addLayer({
-        id: bufLineLayer,
-        type: "line",
-        source: bufSrc,
-        paint: {
-          "line-color": "#2b6cb0",
-          "line-width": 2,
-          "line-opacity": 0.6
+          map.addLayer({
+            id: bufLineLayer,
+            type: "line",
+            source: bufSrc,
+            paint: {
+              "line-color": "#2b6cb0",
+              "line-width": 2,
+              "line-opacity": 0.6
+            }
+          });
+        } else {
+          map.getSource(bufSrc).setData(buffersGeoJSON());
         }
-      });
-    } else {
-      map.getSource(bufSrc).setData(buffersGeoJSON());
-    }
 
-  // --- Points ---
-  if (!map.getSource(ptsSrc)) {
-    map.addSource(ptsSrc, { type: "geojson", data: pointsGeoJSON() });
+        // --- Points ---
+        if (!map.getSource(ptsSrc)) {
+          map.addSource(ptsSrc, { type: "geojson", data: pointsGeoJSON() });
 
-    map.addLayer({
-      id: ptsLayer,
-      type: "circle",
-      source: ptsSrc,
-      paint: {
-        "circle-radius": 6,
-        "circle-stroke-width": 2,
-        "circle-color": "#2b6cb0",
-        "circle-stroke-color": "#ffffff"
+          map.addLayer({
+            id: ptsLayer,
+            type: "circle",
+            source: ptsSrc,
+            paint: {
+              "circle-radius": 6,
+              "circle-stroke-width": 2,
+              "circle-color": "#2b6cb0",
+              "circle-stroke-color": "#ffffff"
+            }
+          });
+        } else {
+          map.getSource(ptsSrc).setData(pointsGeoJSON());
+        }
+
+        updateCoordsPanel();
       }
-    });
-  } else {
-    map.getSource(ptsSrc).setData(pointsGeoJSON());
-  }
 
-  // Update coordinate panel
-  const lines = points.map((f, i) => {
-    const [lon, lat] = f.geometry.coordinates;
-    return `${i + 1}\t${lat.toFixed(6)}\t${lon.toFixed(6)}`;
-  });
+      function addStationPoint(lon, lat) {
+        const idx = points.length + 1;
 
-  const header = "idx\tlat\tlon\n";
-  document.getElementById("coords").textContent = header + lines.join("\n");
-}
-  
-
-
-      map.on("load", () => {
-        renderPoints();
-
-      map.on("click", (e) => {
-        const lon = e.lngLat.lng;
-        const lat = e.lngLat.lat;
-
+        // Add point feature
         points.push({
           type: "Feature",
-          properties: { name: `Station ${points.length + 1}` },
+          properties: { name: `Station ${idx}`, stationIdx: idx },
           geometry: { type: "Point", coordinates: [lon, lat] }
         });
 
+        // Add 0.5-mile buffer polygon (circle)
         const pt = turf.point([lon, lat]);
         const circle = turf.circle(pt, 0.5, { units: "miles", steps: 64 });
-        buffers.push({ ...circle, properties: { stationIdx: points.length } });
 
-        renderPoints();
-      });
+        buffers.push({
+          ...circle,
+          properties: { stationIdx: idx }
+        });
 
+        renderLayers();
+      }
+
+      map.on("load", () => {
+        // Initial draw (empty)
+        renderLayers();
+
+        // Add point + buffer on click
+        map.on("click", (e) => {
+          addStationPoint(e.lngLat.lng, e.lngLat.lat);
+        });
+
+        // Clear all
         document.getElementById("clear").addEventListener("click", () => {
           points = [];
           buffers = [];
-          renderPoints();
+          renderLayers();
         });
 
+        // Delete last
         document.getElementById("undo").addEventListener("click", () => {
           if (points.length > 0) {
-          points.pop();
-          buffers.pop();
-          renderPoints();
-        }
+            points.pop();
+            buffers.pop();
+            renderLayers();
+          }
+        });
       });
     </script>
   </body>
