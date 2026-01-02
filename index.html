@@ -127,6 +127,12 @@
           points = [];
           renderPoints();
         });
+        
+        document.getElementById("undo").addEventListener("click", () => {
+          if (points.length > 0) {
+            points.pop();
+            renderPoints();
+          }
       });
     </script>
   </body>
