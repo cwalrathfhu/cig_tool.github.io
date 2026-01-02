@@ -3,13 +3,10 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>MapLibre Stations + 0.5-mi Buffers + TIGERweb/ACS + LODES (Gray Basemap)</title>
+    <title>MapLibre Stations + 0.5-mi Buffers + TIGERweb/ACS + LODES (Gray + FTA Breakpoint Ratings)</title>
 
     <!-- MapLibre GL JS -->
-    <link
-      href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css"
-      rel="stylesheet"
-    />
+    <link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
     <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 
     <!-- Turf.js -->
@@ -26,12 +23,13 @@
         --panel: #f6f8fa;
         --warnbg: #fff7ed;
         --warnbd: #fdba74;
+        --cardbg: #fff;
       }
 
       body { margin: 0; font-family: system-ui, sans-serif; background: var(--bg); }
       #app { display: flex; height: 100vh; width: 100vw; }
       #sidebar {
-        width: 440px;
+        width: 480px;
         border-right: 1px solid var(--border);
         padding: 12px 14px;
         overflow: auto;
@@ -70,7 +68,7 @@
         border-radius: 10px;
         padding: 10px;
         margin-top: 10px;
-        background: #fff;
+        background: var(--cardbg);
       }
 
       .warn {
@@ -84,11 +82,42 @@
       }
 
       .kv { font-size: 13px; }
-      .kv b { display:inline-block; min-width: 190px; }
+      .kv b { display:inline-block; min-width: 210px; }
       #total { font-size: 22px; font-weight: 700; margin-top: 6px; }
       hr { border: 0; border-top: 1px solid var(--border); margin: 12px 0; }
       .tiny { font-size: 12px; color: var(--muted); }
       code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+
+      /* Breakpoint panel */
+      .bpGrid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+        margin-top: 8px;
+      }
+      .bpItem {
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 10px;
+        background: #fafafa;
+      }
+      .pill {
+        display:inline-block;
+        padding: 2px 8px;
+        border-radius: 999px;
+        border: 1px solid var(--border);
+        font-size: 12px;
+        background: #fff;
+      }
+      .pill.na { color: var(--muted); }
+      .pill.high { font-weight: 700; }
+      .pill.mh {}
+      .pill.med {}
+      .pill.ml {}
+      .pill.low {}
+
+      .bpTitle { font-size: 13px; font-weight: 600; margin-bottom: 6px; }
+      .bpMeta { font-size: 12px; color: var(--muted); margin-top: 6px; }
     </style>
   </head>
 
@@ -178,6 +207,58 @@
           <div id="notes" class="tiny" style="margin-top:6px;"></div>
         </div>
 
+        <!-- NEW: FTA breakpoint ratings card -->
+        <div class="card">
+          <div class="kv"><b>FTA CIG Breakpoint Ratings (Small Starts – Land Use)</b></div>
+          <div class="tiny" style="margin-top:6px;">
+            Ratings are populated only where this page can compute the corresponding measure. Others are N/A.
+          </div>
+
+          <div class="bpGrid">
+            <div class="bpItem">
+              <div class="bpTitle">Employment served by system</div>
+              <div>
+                <span id="bpEmpPill" class="pill na">N/A</span>
+              </div>
+              <div class="bpMeta">Value: <span id="bpEmpValue">—</span></div>
+              <div class="bpMeta">Source: LODES WAC C000 (uploaded)</div>
+            </div>
+
+            <div class="bpItem">
+              <div class="bpTitle">Average population density</div>
+              <div>
+                <span id="bpPopPill" class="pill na">N/A</span>
+              </div>
+              <div class="bpMeta">Value: <span id="bpPopValue">—</span></div>
+              <div class="bpMeta">Source: ACS B01003_001E / union area</div>
+            </div>
+
+            <div class="bpItem">
+              <div class="bpTitle">LBAR proportion (station areas vs counties)</div>
+              <div><span class="pill na">N/A</span></div>
+              <div class="bpMeta">Not implemented</div>
+            </div>
+
+            <div class="bpItem">
+              <div class="bpTitle">Community Risk</div>
+              <div><span class="pill na">N/A</span></div>
+              <div class="bpMeta">Not implemented</div>
+            </div>
+
+            <div class="bpItem">
+              <div class="bpTitle">Average essential services per station area</div>
+              <div><span class="pill na">N/A</span></div>
+              <div class="bpMeta">Not implemented</div>
+            </div>
+
+            <div class="bpItem">
+              <div class="bpTitle">Other criteria</div>
+              <div><span class="pill na">N/A</span></div>
+              <div class="bpMeta">No breakpoint mapping in this prototype</div>
+            </div>
+          </div>
+        </div>
+
         <hr />
 
         <h3>LODES (File-based workflow)</h3>
@@ -210,8 +291,7 @@
 
     <script>
       // ----------------------------
-      // Gray basemap (CartoDB Positron raster tiles)
-      // Cleaner, grayscale-ish. Public tiles; review provider usage policy for production.
+      // Gray basemap (Carto light raster tiles)
       // ----------------------------
       const rasterStyle = {
         version: 8,
@@ -239,7 +319,6 @@
         center: [-104.9903, 39.7392],
         zoom: 10
       });
-
       map.addControl(new maplibregl.NavigationControl(), "top-right");
 
       function setStatus(s) {
@@ -339,6 +418,7 @@
       // Variable metadata
       // ----------------------------
       const VAR_META = {
+        // ACS sums
         "B01003_001E": { source: "ACS", agg: "sum", fmt: "int" },
         "B11001_001E": { source: "ACS", agg: "sum", fmt: "int" },
         "B25001_001E": { source: "ACS", agg: "sum", fmt: "int" },
@@ -347,10 +427,12 @@
         "B08201_002E": { source: "ACS", agg: "sum", fmt: "int" },
         "B17001_002E": { source: "ACS", agg: "sum", fmt: "int" },
 
+        // ACS non-additive (approx)
         "B19013_001E": { source: "ACS", agg: "avg", fmt: "usd" },
         "B25064_001E": { source: "ACS", agg: "avg", fmt: "usd" },
         "B25077_001E": { source: "ACS", agg: "avg", fmt: "usd" },
 
+        // LODES employment
         "LODES_WAC_C000": { source: "LODES", agg: "sum", fmt: "int" }
       };
 
@@ -389,6 +471,39 @@
           return val.toLocaleString(undefined, { style: "currency", currency: "USD", maximumFractionDigits: 0 });
         }
         return val.toLocaleString(undefined, { maximumFractionDigits: 0 });
+      }
+
+      // ----------------------------
+      // FTA Small Starts Land Use breakpoints (from your provided table)
+      // ----------------------------
+      const BP_EMPLOYMENT = [
+        { label: "High",        min: 220000, max: Infinity, pill: "high" },
+        { label: "Medium-High", min: 140000, max: 219999,   pill: "mh"   },
+        { label: "Medium",      min: 70000,  max: 139999,   pill: "med"  },
+        { label: "Medium-Low",  min: 40000,  max: 69999,    pill: "ml"   },
+        { label: "Low",         min: -Infinity, max: 39999, pill: "low"  }
+      ];
+
+      const BP_POPDENS = [
+        { label: "High",        min: 15000, max: Infinity, pill: "high" },
+        { label: "Medium-High", min: 9600,  max: 14999,   pill: "mh"   },
+        { label: "Medium",      min: 5760,  max: 9599,    pill: "med"  },
+        { label: "Medium-Low",  min: 2560,  max: 5759,    pill: "ml"   },
+        { label: "Low",         min: -Infinity, max: 2559, pill: "low"  }
+      ];
+
+      function classify(value, breakpoints) {
+        if (!Number.isFinite(value)) return { label: "N/A", pill: "na" };
+        for (const b of breakpoints) {
+          if (value >= b.min && value <= b.max) return { label: b.label, pill: b.pill };
+        }
+        return { label: "N/A", pill: "na" };
+      }
+
+      function setPill(id, label, pill) {
+        const el = document.getElementById(id);
+        el.textContent = label;
+        el.className = `pill ${pill || "na"}`;
       }
 
       // ----------------------------
@@ -545,8 +660,23 @@
         return { value: numerator, used, weightSum: denom };
       }
 
+      async function computeAcsValueOnly(varCode, year, geoLevel) {
+        const unionFeat = bufferUnionPolygon();
+        if (!unionFeat) return { value: NaN, used: 0 };
+
+        const geos = await fetchTigerwebGeos(geoLevel, unionFeat);
+        if (geos.length === 0) return { value: NaN, used: 0 };
+
+        const geoids = geos.map(f => f.properties.GEOID).filter(Boolean);
+        const valueMap = await fetchACSValues(geoLevel, year, varCode, geoids);
+
+        const meta = getMeta(varCode);
+        const agg = aggregateWithinUnion(unionFeat, geos, valueMap, meta.agg);
+        return { value: agg.value, used: agg.used };
+      }
+
       // ----------------------------
-      // LODES: download + upload-based parsing
+      // LODES: download + upload parsing + employment served computation
       // ----------------------------
       const STATE_FIPS_TO_ABBR = {
         "01":"al","02":"ak","04":"az","05":"ar","06":"ca","08":"co","09":"ct","10":"de","11":"dc","12":"fl",
@@ -658,12 +788,10 @@
         });
 
         const url = `${layerUrl}/query?${params.toString()}`;
-        setStatus("Querying TIGERweb blocks…");
         const resp = await fetch(url);
         if (!resp.ok) throw new Error(`TIGERweb blocks query failed (${resp.status})`);
         const gj = await resp.json();
 
-        setStatus("Filtering blocks within union…");
         const inside = new Set();
         for (const f of (gj.features || [])) {
           const p = f.properties || {};
@@ -679,6 +807,89 @@
         return inside;
       }
 
+      async function computeEmploymentServedOnly() {
+        const unionFeat = bufferUnionPolygon();
+        if (!unionFeat || !LODES_UPLOADED) return { value: NaN, blocks: 0, matched: 0 };
+
+        const blocksInside = await fetchBlocksInternalPointsInUnion(unionFeat);
+
+        let sum = 0;
+        let matched = 0;
+        for (const geoid of blocksInside) {
+          const v = LODES_UPLOADED.get(geoid);
+          if (v != null) { sum += v; matched++; }
+        }
+        return { value: sum, blocks: blocksInside.size, matched };
+      }
+
+      // ----------------------------
+      // Breakpoint ratings updater
+      // ----------------------------
+      async function updateBreakpointRatings() {
+        const unionFeat = bufferUnionPolygon();
+        if (!unionFeat) {
+          setPill("bpEmpPill", "N/A", "na");
+          setPill("bpPopPill", "N/A", "na");
+          document.getElementById("bpEmpValue").textContent = "—";
+          document.getElementById("bpPopValue").textContent = "—";
+          return;
+        }
+
+        // Average population density = ACS population / union area (sq mi)
+        const year = document.getElementById("yearSelect").value;
+        const geoLevel = document.getElementById("geoLevel").value;
+
+        // union area in sq miles
+        const SQM_PER_SQMI = 2589988.110336;
+        const areaSqMi = turf.area(unionFeat) / SQM_PER_SQMI;
+
+        // Population total
+        try {
+          setStatus("Computing breakpoint ratings…");
+          const popRes = await computeAcsValueOnly("B01003_001E", year, geoLevel);
+          const popTotal = popRes.value;
+          const popDensity = (Number.isFinite(popTotal) && Number.isFinite(areaSqMi) && areaSqMi > 0)
+            ? (popTotal / areaSqMi)
+            : NaN;
+
+          document.getElementById("bpPopValue").textContent = Number.isFinite(popDensity)
+            ? `${Math.round(popDensity).toLocaleString()} persons/sq mile`
+            : "—";
+
+          const popClass = classify(popDensity, BP_POPDENS);
+          setPill("bpPopPill", popClass.label, popClass.pill);
+        } catch (_) {
+          setPill("bpPopPill", "N/A", "na");
+          document.getElementById("bpPopValue").textContent = "—";
+        }
+
+        // Employment served by system (only if LODES loaded)
+        try {
+          if (!LODES_UPLOADED) {
+            setPill("bpEmpPill", "N/A", "na");
+            document.getElementById("bpEmpValue").textContent = "—";
+          } else {
+            const empRes = await computeEmploymentServedOnly();
+            const emp = empRes.value;
+
+            document.getElementById("bpEmpValue").textContent = Number.isFinite(emp)
+              ? emp.toLocaleString()
+              : "—";
+
+            const empClass = classify(emp, BP_EMPLOYMENT);
+            setPill("bpEmpPill", empClass.label, empClass.pill);
+          }
+        } catch (_) {
+          setPill("bpEmpPill", "N/A", "na");
+          document.getElementById("bpEmpValue").textContent = "—";
+        } finally {
+          setStatus("Ready");
+        }
+      }
+
+      // ----------------------------
+      // Summary runners
+      // ----------------------------
       async function runLodesEmploymentSummary(year) {
         const notesEl = document.getElementById("notes");
         const totalEl = document.getElementById("total");
@@ -701,6 +912,7 @@
           return;
         }
 
+        setStatus("Querying TIGERweb blocks…");
         const blocksInside = await fetchBlocksInternalPointsInUnion(unionFeat);
         nGeosEl.textContent = String(blocksInside.size);
 
@@ -710,10 +922,7 @@
 
         for (const geoid of blocksInside) {
           const v = LODES_UPLOADED.get(geoid);
-          if (v != null) {
-            sum += v;
-            matched++;
-          }
+          if (v != null) { sum += v; matched++; }
         }
 
         totalEl.textContent = sum.toLocaleString(undefined, { maximumFractionDigits: 0 });
@@ -723,9 +932,6 @@
         setStatus("Done");
       }
 
-      // ----------------------------
-      // ACS summary runner
-      // ----------------------------
       async function runAcsSummary(varCode, year, geoLevel) {
         const meta = getMeta(varCode);
         const notesEl = document.getElementById("notes");
@@ -785,6 +991,9 @@
         } else {
           await runAcsSummary(varCode, year, geoLevel);
         }
+
+        // Update ratings after each run
+        await updateBreakpointRatings();
       }
 
       // ----------------------------
@@ -809,6 +1018,7 @@
           document.getElementById("total").textContent = "—";
           document.getElementById("notes").textContent = "";
           setStatus("Cleared");
+          updateBreakpointRatings();
         });
 
         document.getElementById("undo").addEventListener("click", () => {
@@ -817,6 +1027,7 @@
             buffers.pop();
             renderStationLayers();
             setStatus("Updated");
+            updateBreakpointRatings();
           }
         });
 
@@ -862,17 +1073,19 @@
             LODES_UPLOADED_NAME = file.name;
             setLodesLoadedUI(true, file.name, jobsMap.size);
             setStatus("Ready");
+            updateBreakpointRatings();
           } catch (err) {
             LODES_UPLOADED = null;
             LODES_UPLOADED_NAME = "";
             setLodesLoadedUI(false, "", 0);
             setStatus("Error");
             document.getElementById("lodesInfo").textContent = String(err && err.message ? err.message : err);
+            updateBreakpointRatings();
           }
         });
 
-        // Initialize LODES loaded UI
-        document.getElementById("lodesLoaded").textContent = "No";
+        // Initialize ratings
+        updateBreakpointRatings();
       });
     </script>
   </body>
