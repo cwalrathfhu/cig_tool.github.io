@@ -11,6 +11,8 @@
       rel="stylesheet"
     />
     <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+    <script src="https://unpkg.com/@turf/turf@6.5.0/turf.min.js"></script>
+
 
     <style>
       body { margin: 0; font-family: system-ui, sans-serif; }
@@ -76,64 +78,109 @@
         };
       }
 
-      function renderPoints() {
-        const srcId = "stations";
-        const layerId = "stations-layer";
+      let buffers = [];
+      function buffersGeoJSON() {
+        return { type: "FeatureCollection", features: buffers };
+      }
 
-        if (!map.getSource(srcId)) {
-          map.addSource(srcId, { type: "geojson", data: pointsGeoJSON() });
+      function renderPoints() {
+        const ptsSrc = "stations";
+        const ptsLayer = "stations-layer";
+        const bufSrc = "buffers";
+        const bufFillLayer = "buffers-fill";
+        const bufLineLayer = "buffers-line";
+
+  // --- Buffers ---
+        if (!map.getSource(bufSrc)) {
+          map.addSource(bufSrc, { type: "geojson", data: buffersGeoJSON() });
 
           map.addLayer({
-            id: layerId,
-            type: "circle",
-            source: srcId,
+            id: bufFillLayer,
+            type: "fill",
+            source: bufSrc,
             paint: {
-              "circle-radius": 6,
-              "circle-stroke-width": 2,
-              "circle-color": "#2b6cb0",
-              "circle-stroke-color": "#ffffff"
+              "fill-color": "#2b6cb0",
+              "fill-opacity": 0.2
             }
           });
-        } else {
-          map.getSource(srcId).setData(pointsGeoJSON());
+
+      map.addLayer({
+        id: bufLineLayer,
+        type: "line",
+        source: bufSrc,
+        paint: {
+          "line-color": "#2b6cb0",
+          "line-width": 2,
+          "line-opacity": 0.6
         }
+      });
+    } else {
+      map.getSource(bufSrc).setData(buffersGeoJSON());
+    }
 
-        // Update coordinate panel
-        const lines = points.map((f, i) => {
-          const [lon, lat] = f.geometry.coordinates;
-          return `${i + 1}\t${lat.toFixed(6)}\t${lon.toFixed(6)}`;
-        });
+  // --- Points ---
+  if (!map.getSource(ptsSrc)) {
+    map.addSource(ptsSrc, { type: "geojson", data: pointsGeoJSON() });
 
-        const header = "idx\tlat\tlon\n";
-        document.getElementById("coords").textContent = header + lines.join("\n");
+    map.addLayer({
+      id: ptsLayer,
+      type: "circle",
+      source: ptsSrc,
+      paint: {
+        "circle-radius": 6,
+        "circle-stroke-width": 2,
+        "circle-color": "#2b6cb0",
+        "circle-stroke-color": "#ffffff"
       }
+    });
+  } else {
+    map.getSource(ptsSrc).setData(pointsGeoJSON());
+  }
+
+  // Update coordinate panel
+  const lines = points.map((f, i) => {
+    const [lon, lat] = f.geometry.coordinates;
+    return `${i + 1}\t${lat.toFixed(6)}\t${lon.toFixed(6)}`;
+  });
+
+  const header = "idx\tlat\tlon\n";
+  document.getElementById("coords").textContent = header + lines.join("\n");
+}
+  
+
 
       map.on("load", () => {
         renderPoints();
 
-        map.on("click", (e) => {
-          const lon = e.lngLat.lng;
-          const lat = e.lngLat.lat;
+      map.on("click", (e) => {
+        const lon = e.lngLat.lng;
+        const lat = e.lngLat.lat;
 
-          points.push({
-            type: "Feature",
-            properties: { name: `Station ${points.length + 1}` },
-            geometry: { type: "Point", coordinates: [lon, lat] }
-          });
-
-          renderPoints();
+        points.push({
+          type: "Feature",
+          properties: { name: `Station ${points.length + 1}` },
+          geometry: { type: "Point", coordinates: [lon, lat] }
         });
+
+        const pt = turf.point([lon, lat]);
+        const circle = turf.circle(pt, 0.5, { units: "miles", steps: 64 });
+        buffers.push({ ...circle, properties: { stationIdx: points.length } });
+
+        renderPoints();
+      });
 
         document.getElementById("clear").addEventListener("click", () => {
           points = [];
+          buffers = [];
           renderPoints();
         });
-        
+
         document.getElementById("undo").addEventListener("click", () => {
           if (points.length > 0) {
-            points.pop();
-            renderPoints();
-          }
+          points.pop();
+          buffers.pop();
+          renderPoints();
+        }
       });
     </script>
   </body>
