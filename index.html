@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>MapLibre Stations + Buffers + TIGERweb/ACS + LODES Employment (Prototype)</title>
+    <title>MapLibre Stations + 0.5-mi Buffers + TIGERweb/ACS + LODES (Upload-based)</title>
 
     <!-- MapLibre GL JS -->
     <link
@@ -31,7 +31,7 @@
       body { margin: 0; font-family: system-ui, sans-serif; background: var(--bg); }
       #app { display: flex; height: 100vh; width: 100vw; }
       #sidebar {
-        width: 420px;
+        width: 440px;
         border-right: 1px solid var(--border);
         padding: 12px 14px;
         overflow: auto;
@@ -42,7 +42,7 @@
       h3 { margin: 8px 0 10px; font-size: 16px; }
       .muted { color: var(--muted); font-size: 13px; line-height: 1.35; }
       label { display:block; margin: 10px 0; font-size: 13px; }
-      select, button {
+      select, button, input[type="file"] {
         width: 100%;
         padding: 8px 10px;
         margin-top: 6px;
@@ -50,6 +50,7 @@
         font: inherit;
       }
       button { cursor: pointer; }
+
       .btnRow { display:flex; gap:10px; }
       .btnRow button { width: 50%; }
 
@@ -83,7 +84,7 @@
       }
 
       .kv { font-size: 13px; }
-      .kv b { display:inline-block; min-width: 175px; }
+      .kv b { display:inline-block; min-width: 190px; }
       #total { font-size: 22px; font-weight: 700; margin-top: 6px; }
       hr { border: 0; border-top: 1px solid var(--border); margin: 12px 0; }
       .tiny { font-size: 12px; color: var(--muted); }
@@ -114,13 +115,14 @@
 
         <hr />
 
-        <h3>Station-area Data (TIGERweb + ACS + LODES)</h3>
+        <h3>Station-area Data</h3>
         <p class="muted">
-          All summaries are computed within the <b>dissolved union</b> of all 0.5-mile buffers (avoids double counting).
+          Summaries are computed within the <b>dissolved union</b> of all 0.5-mile buffers (avoids double counting).
+          For ACS, counts are area-apportioned; medians are shown as an area-weighted average estimate.
         </p>
 
         <label>
-          Geography level (for ACS only)
+          Geography level (ACS only)
           <select id="geoLevel">
             <option value="tract">Census Tracts (faster)</option>
             <option value="bg">Block Groups (more detailed)</option>
@@ -139,7 +141,7 @@
             </optgroup>
 
             <optgroup label="Land Use / Employment (LODES: additive sum)">
-              <option value="LODES_WAC_C000">Total existing employment (LODES WAC C000)</option>
+              <option value="LODES_WAC_C000">Total existing employment (LODES WAC C000) — requires file upload</option>
             </optgroup>
 
             <optgroup label="Mobility / Transit-dependent (ACS: additive sums)">
@@ -147,7 +149,7 @@
               <option value="B17001_002E">Persons below poverty level (ACS B17001_002E)</option>
             </optgroup>
 
-            <optgroup label="Non-additive (ACS medians: shown as area-weighted average estimate)">
+            <optgroup label="Non-additive (ACS medians: area-weighted average estimate)">
               <option value="B19013_001E">Median household income (ACS B19013_001E) ⚠</option>
               <option value="B25064_001E">Median gross rent (ACS B25064_001E) ⚠</option>
               <option value="B25077_001E">Median home value (ACS B25077_001E) ⚠</option>
@@ -176,15 +178,31 @@
           <div id="notes" class="tiny" style="margin-top:6px;"></div>
         </div>
 
-        <div class="warn" style="margin-top:10px;">
-          <b>LODES performance note (prototype):</b>
-          This page can fetch and parse statewide <code>.csv.gz</code> LODES WAC files in your browser. Some states’ files are large and may be slow
-          or memory-intensive on laptops. For production, use a backend or preprocessed tiles/Parquet.
-        </div>
+        <hr />
+
+        <h3>LODES (File-based workflow)</h3>
+        <p class="muted">
+          Some browsers block cross-site <code>fetch()</code> of LODES files. This workflow avoids that by:
+          <b>(1)</b> downloading the official <code>.csv.gz</code> file and <b>(2)</b> loading it from your computer.
+        </p>
 
         <div class="card">
-          <div class="kv"><b>LODES cache:</b> <span id="lodesCache">None</span></div>
           <div class="kv"><b>Detected state:</b> <span id="lodesState">—</span></div>
+          <div class="kv"><b>LODES file loaded:</b> <span id="lodesLoaded">No</span></div>
+        </div>
+
+        <button id="downloadLodes">Download LODES WAC (JT00, S000) for current state</button>
+
+        <label>
+          Load downloaded LODES file (.csv.gz)
+          <input id="lodesFile" type="file" accept=".gz,.csv.gz" />
+        </label>
+
+        <div id="lodesInfo" class="tiny" style="margin-top:6px;"></div>
+
+        <div class="warn">
+          <b>Prototype note:</b> Parsing statewide LODES files can be slow and memory-heavy. For production, use a backend
+          or preprocessed extracts/tiles.
         </div>
       </div>
 
@@ -232,12 +250,8 @@
       let points = [];
       let buffers = [];
 
-      function pointsGeoJSON() {
-        return { type: "FeatureCollection", features: points };
-      }
-      function buffersGeoJSON() {
-        return { type: "FeatureCollection", features: buffers };
-      }
+      function pointsGeoJSON() { return { type: "FeatureCollection", features: points }; }
+      function buffersGeoJSON() { return { type: "FeatureCollection", features: buffers }; }
 
       function updateCoordsPanel() {
         document.getElementById("nStations").textContent = String(points.length);
@@ -257,14 +271,12 @@
 
         if (!map.getSource(bufSrc)) {
           map.addSource(bufSrc, { type: "geojson", data: buffersGeoJSON() });
-
           map.addLayer({
             id: bufFillLayer,
             type: "fill",
             source: bufSrc,
             paint: { "fill-color": "#2b6cb0", "fill-opacity": 0.2 }
           });
-
           map.addLayer({
             id: bufLineLayer,
             type: "line",
@@ -277,7 +289,6 @@
 
         if (!map.getSource(ptsSrc)) {
           map.addSource(ptsSrc, { type: "geojson", data: pointsGeoJSON() });
-
           map.addLayer({
             id: ptsLayer,
             type: "circle",
@@ -311,7 +322,6 @@
         renderStationLayers();
       }
 
-      // Dissolve buffer union
       function bufferUnionPolygon() {
         if (buffers.length === 0) return null;
         let u = buffers[0];
@@ -356,11 +366,11 @@
         const warnEl = document.getElementById("aggWarning");
 
         if (meta.source === "LODES") {
-          aggMethodEl.textContent = "Sum (jobs in intersecting blocks; centroid-in-polygon)";
+          aggMethodEl.textContent = "Sum (LODES jobs for blocks whose internal point is inside union)";
           warnEl.style.display = "block";
           warnEl.innerHTML =
-            "<b>LODES method:</b> Sums LODES WAC jobs (C000) for blocks whose internal point falls within the dissolved 0.5-mile buffer union. " +
-            "This is a screening-grade approach. For higher rigor, use block polygon overlap apportionment and/or a backend pipeline.";
+            "<b>LODES method:</b> Sums LODES WAC jobs (C000) for blocks whose TIGERweb internal point " +
+            "falls within the dissolved 0.5-mile buffer union. Screening-grade approach.";
           return;
         }
 
@@ -372,8 +382,7 @@
           aggMethodEl.textContent = "Area-weighted average (approximation)";
           warnEl.style.display = "block";
           warnEl.textContent =
-            "Selected variable is non-additive (e.g., median). This tool reports an area-weighted average estimate, not a true median. " +
-            "For a more defensible value, compute from distributions (additional ACS tables required).";
+            "Selected ACS variable is non-additive (e.g., median). This tool reports an area-weighted average estimate, not a true median.";
         }
       }
 
@@ -392,13 +401,11 @@
         const srcId = "census-geos";
         const fillId = "census-geos-fill";
         const lineId = "census-geos-line";
-
         const fc = { type: "FeatureCollection", features: geos };
 
         if (!map.getSource(srcId)) {
           map.addSource(srcId, { type: "geojson", data: fc });
 
-          // Put beneath station buffers
           map.addLayer({
             id: fillId,
             type: "fill",
@@ -418,7 +425,7 @@
       }
 
       // ----------------------------
-      // TIGERweb fetch for tracts / block groups (GeoJSON)
+      // TIGERweb fetch for tracts / block groups
       // Tracts_Blocks MapServer:
       //   0 = Census Tracts
       //   1 = Census Block Groups
@@ -445,12 +452,11 @@
         const resp = await fetch(url);
         if (!resp.ok) throw new Error(`TIGERweb error ${resp.status}`);
         const geojson = await resp.json();
-
         return (geojson.features || []).filter(f => turf.booleanIntersects(f, unionFeat));
       }
 
       // ----------------------------
-      // ACS API fetch
+      // ACS API fetch + aggregation
       // ----------------------------
       function parseGEOID(geoLevel, geoid) {
         const state = geoid.slice(0, 2);
@@ -545,8 +551,7 @@
       }
 
       // ----------------------------
-      // LODES: detect state at map center via TIGERweb Blocks (layer 2)
-      // Then fetch/parse LODES WAC file for that state/year and sum C000 for blocks in union.
+      // LODES: download + upload-based parsing
       // ----------------------------
       const STATE_FIPS_TO_ABBR = {
         "01":"al","02":"ak","04":"az","05":"ar","06":"ca","08":"co","09":"ct","10":"de","11":"dc","12":"fl",
@@ -576,7 +581,7 @@
 
         const url = `${layerUrl}/query?${params.toString()}`;
         const resp = await fetch(url);
-        if (!resp.ok) throw new Error(`TIGERweb block lookup failed (${resp.status})`);
+        if (!resp.ok) throw new Error(`TIGERweb state lookup failed (${resp.status})`);
         const gj = await resp.json();
 
         const feat = gj.features && gj.features[0];
@@ -588,46 +593,39 @@
         return { stateFips, abbr };
       }
 
-      // LODES cache: key -> Map(w_geocode -> C000)
-      // This can be large; for prototype only.
-      const LODES_CACHE = new Map(); // key = `${abbr}_${year}`
-
-      function updateLodesCacheUI() {
-        const el = document.getElementById("lodesCache");
-        if (LODES_CACHE.size === 0) {
-          el.textContent = "None";
-          return;
-        }
-        el.textContent = Array.from(LODES_CACHE.keys()).join(", ");
+      function startDownload(url, filename) {
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = filename || "";
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
       }
 
-      async function fetchAndParseLodesWac(abbr, year) {
-        const cacheKey = `${abbr}_${year}`;
-        if (LODES_CACHE.has(cacheKey)) return LODES_CACHE.get(cacheKey);
+      let LODES_UPLOADED = null; // Map(w_geocode -> C000)
+      let LODES_UPLOADED_NAME = "";
 
-        // WAC all jobs: segment S000, job type JT00
-        const url = `https://lehd.ces.census.gov/data/lodes/LODES8/${abbr}/wac/${abbr}_wac_S000_JT00_${year}.csv.gz`;
+      function setLodesLoadedUI(loaded, name, nRows) {
+        document.getElementById("lodesLoaded").textContent = loaded ? "Yes" : "No";
+        if (!loaded) {
+          document.getElementById("lodesInfo").textContent = "";
+        } else {
+          document.getElementById("lodesInfo").textContent =
+            `Loaded ${name} (${nRows.toLocaleString()} block rows).`;
+        }
+      }
 
-        // Optional: HEAD to show size (may be blocked on some servers; ignore if fails)
-        try { await fetch(url, { method: "HEAD" }); } catch (_) {}
-
-        setStatus(`Fetching LODES ${abbr.toUpperCase()} ${year}…`);
-        const resp = await fetch(url);
-        if (!resp.ok) throw new Error(`LODES download failed (${resp.status}) for ${abbr.toUpperCase()} ${year}`);
-
-        const gz = new Uint8Array(await resp.arrayBuffer());
+      async function parseLodesFromUploadedFile(file) {
+        setStatus("Reading LODES file…");
+        const buf = await file.arrayBuffer();
+        const gz = new Uint8Array(buf);
 
         setStatus("Decompressing LODES (gzip)…");
-        // Inflate to string. This can be memory-heavy on large states.
         const csvText = pako.ungzip(gz, { to: "string" });
 
         setStatus("Parsing LODES CSV…");
-        const mapJobs = new Map(); // w_geocode -> C000
-
-        // Minimal CSV parsing: LODES fields have no quoted commas; safe to split by comma.
-        // We only need: w_geocode, C000
         const lines = csvText.split(/\r?\n/);
-        if (lines.length < 2) throw new Error("LODES CSV appears empty.");
+        if (lines.length < 2) throw new Error("LODES file appears empty.");
 
         const header = lines[0].split(",");
         const idxGeo = header.indexOf("w_geocode");
@@ -636,6 +634,7 @@
           throw new Error("LODES CSV missing expected columns (w_geocode, C000).");
         }
 
+        const jobsMap = new Map();
         for (let i = 1; i < lines.length; i++) {
           const line = lines[i];
           if (!line) continue;
@@ -645,16 +644,13 @@
           if (!g || c === undefined) continue;
           const v = Number(c);
           if (!Number.isFinite(v)) continue;
-          mapJobs.set(g, v);
+          jobsMap.set(String(g), v);
         }
 
-        LODES_CACHE.set(cacheKey, mapJobs);
-        updateLodesCacheUI();
-        return mapJobs;
+        return jobsMap;
       }
 
       async function fetchBlocksInternalPointsInUnion(unionFeat) {
-        // Query 2020 blocks within bbox, return GEOID and INTPTLAT/INTPTLON (internal point)
         const bbox = bboxStringFromFeature(unionFeat);
         const layerUrl = "https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/Tracts_Blocks/MapServer/2";
 
@@ -673,10 +669,9 @@
         const url = `${layerUrl}/query?${params.toString()}`;
         setStatus("Querying TIGERweb blocks…");
         const resp = await fetch(url);
-        if (!resp.ok) throw new Error(`TIGERweb block bbox query failed (${resp.status})`);
+        if (!resp.ok) throw new Error(`TIGERweb blocks query failed (${resp.status})`);
         const gj = await resp.json();
 
-        // Build set of GEOIDs whose internal point is inside union polygon
         setStatus("Filtering blocks within union…");
         const inside = new Set();
         for (const f of (gj.features || [])) {
@@ -686,9 +681,7 @@
           const lon = Number(p.INTPTLON);
           if (!geoid || !Number.isFinite(lat) || !Number.isFinite(lon)) continue;
 
-          const pt = turf.point([lon, lat]);
-          if (turf.booleanPointInPolygon(pt, unionFeat)) {
-            // LODES uses 15-digit block GEOID; TIGERweb GEOID is typically 15 for blocks
+          if (turf.booleanPointInPolygon(turf.point([lon, lat]), unionFeat)) {
             inside.add(String(geoid));
           }
         }
@@ -711,22 +704,23 @@
           return;
         }
 
-        setStatus("Determining state…");
-        const { abbr, stateFips } = await getStateFromMapCenter();
-        document.getElementById("lodesState").textContent = `${abbr.toUpperCase()} (FIPS ${stateFips})`;
+        // Ensure user loaded a LODES file
+        if (!LODES_UPLOADED) {
+          setStatus("LODES file required");
+          notesEl.textContent = "Download the LODES file for your state, then load the .csv.gz using the file picker.";
+          return;
+        }
 
+        // Count blocks inside union (centroid/internal point method)
         const blocksInside = await fetchBlocksInternalPointsInUnion(unionFeat);
         nGeosEl.textContent = String(blocksInside.size);
-
-        // Fetch + parse LODES WAC
-        const jobsMap = await fetchAndParseLodesWac(abbr, year);
 
         setStatus("Summing jobs within union…");
         let sum = 0;
         let matched = 0;
 
         for (const geoid of blocksInside) {
-          const v = jobsMap.get(geoid);
+          const v = LODES_UPLOADED.get(geoid);
           if (v != null) {
             sum += v;
             matched++;
@@ -735,16 +729,17 @@
 
         totalEl.textContent = sum.toLocaleString(undefined, { maximumFractionDigits: 0 });
         notesEl.textContent =
-          `LODES WAC C000 summed for ${matched.toLocaleString()} blocks (of ${blocksInside.size.toLocaleString()} in union bbox-filter) within dissolved 0.5-mile buffers; ${abbr.toUpperCase()} ${year}.`;
+          `LODES WAC C000 summed for ${matched.toLocaleString()} matched blocks (of ${blocksInside.size.toLocaleString()} blocks in union); year ${year}. File: ${LODES_UPLOADED_NAME}`;
 
         setStatus("Done");
       }
 
       // ----------------------------
-      // Run ACS summary
+      // ACS summary runner
       // ----------------------------
       async function runAcsSummary(varCode, year, geoLevel) {
         const meta = getMeta(varCode);
+
         const notesEl = document.getElementById("notes");
         const totalEl = document.getElementById("total");
         const nGeosEl = document.getElementById("nGeos");
@@ -789,9 +784,6 @@
         setStatus("Done");
       }
 
-      // ----------------------------
-      // Main dispatcher
-      // ----------------------------
       async function runSummary() {
         const varCode = document.getElementById("varSelect").value;
         const year = document.getElementById("yearSelect").value;
@@ -808,16 +800,13 @@
       }
 
       // ----------------------------
-      // Initialize
+      // Init
       // ----------------------------
       map.on("load", () => {
         setStatus("Ready");
         renderStationLayers();
-        updateLodesCacheUI();
 
-        // Initialize agg UI
         setAggUI(getMeta(document.getElementById("varSelect").value));
-
         document.getElementById("varSelect").addEventListener("change", (e) => {
           setAggUI(getMeta(e.target.value));
         });
@@ -851,6 +840,51 @@
             document.getElementById("notes").textContent = String(e && e.message ? e.message : e);
           }
         });
+
+        // LODES: download for detected state (map center) and selected year
+        document.getElementById("downloadLodes").addEventListener("click", async () => {
+          try {
+            setStatus("Determining state…");
+            const { stateFips, abbr } = await getStateFromMapCenter();
+            document.getElementById("lodesState").textContent = `${abbr.toUpperCase()} (FIPS ${stateFips})`;
+
+            const year = document.getElementById("yearSelect").value;
+            const url = `https://lehd.ces.census.gov/data/lodes/LODES8/${abbr}/wac/${abbr}_wac_S000_JT00_${year}.csv.gz`;
+            const filename = `${abbr}_wac_S000_JT00_${year}.csv.gz`;
+
+            document.getElementById("lodesInfo").textContent =
+              `Downloading ${filename}. After download completes, load it using the file picker below.`;
+            setStatus("Starting download…");
+            startDownload(url, filename);
+            setStatus("Ready");
+          } catch (e) {
+            setStatus("Error");
+            document.getElementById("lodesInfo").textContent = String(e && e.message ? e.message : e);
+          }
+        });
+
+        // LODES: file upload parsing
+        document.getElementById("lodesFile").addEventListener("change", async (e) => {
+          const file = e.target.files && e.target.files[0];
+          if (!file) return;
+
+          try {
+            const jobsMap = await parseLodesFromUploadedFile(file);
+            LODES_UPLOADED = jobsMap;
+            LODES_UPLOADED_NAME = file.name;
+            setLodesLoadedUI(true, file.name, jobsMap.size);
+            setStatus("Ready");
+          } catch (err) {
+            LODES_UPLOADED = null;
+            LODES_UPLOADED_NAME = "";
+            setLodesLoadedUI(false, "", 0);
+            setStatus("Error");
+            document.getElementById("lodesInfo").textContent = String(err && err.message ? err.message : err);
+          }
+        });
+
+        // Initialize LODES loaded UI
+        setLodesLoadedUI(false, "", 0);
       });
     </script>
   </body>
