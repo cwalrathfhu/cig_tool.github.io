@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>MapLibre Stations + Buffers + ACS + LODES + Uploads (FTA Breakpoint Ratings)</title>
+    <title>Casey's CIG tool prototype</title>
 
     <!-- MapLibre GL JS -->
     <link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
@@ -14,6 +14,9 @@
 
     <!-- pako for gzip inflate (LODES CSV.GZ) -->
     <script src="https://unpkg.com/pako@2.1.0/dist/pako.min.js"></script>
+
+    <!-- PapaParse for robust CSV parsing (handles quoted commas) -->
+    <script src="https://unpkg.com/papaparse@5.4.1/papaparse.min.js"></script>
 
     <style>
       :root {
@@ -120,7 +123,6 @@
       .bpMeta { font-size: 12px; color: var(--muted); margin-top: 6px; }
 
       .twoCol { display:grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-      .inlineNote { margin-top: 6px; font-size: 12px; color: var(--muted); }
     </style>
   </head>
 
@@ -210,12 +212,10 @@
           <div id="notes" class="tiny" style="margin-top:6px;"></div>
         </div>
 
-        <!-- FTA breakpoint ratings card -->
         <div class="card">
           <div class="kv"><b>FTA CIG Breakpoint Ratings (Small Starts – Land Use)</b></div>
           <div class="tiny" style="margin-top:6px;">
-            Uses the breakpoints table for: population density, employment served, LBAR ratio, community risk, essential services.
-            Where required inputs are missing, shows N/A.
+            Pop density + Employment + LBAR ratio + Community Risk + Essential services.
           </div>
 
           <div class="bpGrid">
@@ -266,11 +266,10 @@
 
         <h3>Uploads for Remaining Land Use Measures</h3>
 
-        <!-- CRE upload -->
         <div class="card">
           <div class="kv"><b>Community Risk (CRE) Upload</b></div>
           <div class="tiny" style="margin-top:6px;">
-            Upload a tract-level CSV containing GEOID + total population + high-risk population. The tool area-apportions by tract overlap with the ½-mile union.
+            Upload tract CSV from Census (quoted commas are OK). Set: GEOID, POPUNI, and PRED3_E (or your chosen fields).
           </div>
 
           <label>
@@ -294,11 +293,10 @@
           <div class="tiny" id="creInfo">No file loaded.</div>
         </div>
 
-        <!-- Essential services upload -->
         <div class="card">
           <div class="kv"><b>Essential Services Upload</b></div>
           <div class="tiny" style="margin-top:6px;">
-            Upload GeoJSON (<code>FeatureCollection</code> of points) or CSV (lat/lon). Counted within <b>1-mile</b> radius of each station; reported as the average across stations.
+            Upload GeoJSON points or CSV. Counted within <b>1-mile</b> of each station; averaged across stations.
           </div>
 
           <label>
@@ -318,12 +316,11 @@
           <div class="tiny" id="essInfo">No file loaded.</div>
         </div>
 
-        <!-- LBAR upload -->
         <div class="card">
           <div class="kv"><b>LBAR Housing Inventory Upload</b></div>
           <div class="tiny" style="margin-top:6px;">
-            Upload a CSV or GeoJSON points for LBAR sites. Requires units per site and (recommended) 5-digit county FIPS per site.
-            Counties for the project corridor are entered below as comma-separated 5-digit FIPS.
+            Upload GeoJSON points (properties.units, optional properties.county) or CSV (lat/lon/units, optional county FIPS).
+            Enter project counties as comma-separated 5-digit FIPS.
           </div>
 
           <label>
@@ -344,7 +341,7 @@
             <label>Units column
               <select id="lbarColUnits" disabled></select>
             </label>
-            <label>County FIPS column (optional but needed for county share)
+            <label>County FIPS column (optional)
               <select id="lbarColCounty" disabled></select>
             </label>
           </div>
@@ -419,8 +416,54 @@
       });
       map.addControl(new maplibregl.NavigationControl(), "top-right");
 
-      function setStatus(s) {
-        document.getElementById("status").textContent = s;
+      function setStatus(s) { document.getElementById("status").textContent = s; }
+
+      // ----------------------------
+      // Robust CSV parsing + helpers
+      // ----------------------------
+      function parseCSV(text) {
+        const res = Papa.parse(text, {
+          header: true,
+          dynamicTyping: false,
+          skipEmptyLines: true
+        });
+        if (res.errors && res.errors.length) {
+          console.warn("CSV parse warnings:", res.errors.slice(0, 10));
+        }
+        const headers = res.meta && res.meta.fields ? res.meta.fields : [];
+        const rows = res.data || [];
+        return { headers, rows };
+      }
+
+      function fillSelect(selectEl, options, placeholder = "Select…") {
+        selectEl.innerHTML = "";
+        const opt0 = document.createElement("option");
+        opt0.value = "";
+        opt0.textContent = placeholder;
+        selectEl.appendChild(opt0);
+        for (const o of options) {
+          const opt = document.createElement("option");
+          opt.value = o;
+          opt.textContent = o;
+          selectEl.appendChild(opt);
+        }
+      }
+
+      function enableSelect(selectEl, enabled) { selectEl.disabled = !enabled; }
+
+      function toNumberSafe(v) {
+        if (v == null) return NaN;
+        const s = String(v).replace(/,/g, "").trim();
+        if (s === "") return NaN;
+        const n = Number(s);
+        return Number.isFinite(n) ? n : NaN;
+      }
+
+      function normalizeTractGEOID(raw) {
+        // CRE GEO_ID is like 1400000US01001020100 -> want trailing 11 digits
+        const s = String(raw || "").trim();
+        const m = s.match(/(\d{11})$/);
+        return m ? m[1] : "";
       }
 
       // ----------------------------
@@ -508,15 +551,12 @@
         return u;
       }
 
-      function bboxStringFromFeature(feat) {
-        return turf.bbox(feat).join(",");
-      }
+      function bboxStringFromFeature(feat) { return turf.bbox(feat).join(","); }
 
       // ----------------------------
       // Variable metadata (main summary)
       // ----------------------------
       const VAR_META = {
-        // ACS sums
         "B01003_001E": { source: "ACS", agg: "sum", fmt: "int" },
         "B11001_001E": { source: "ACS", agg: "sum", fmt: "int" },
         "B25001_001E": { source: "ACS", agg: "sum", fmt: "int" },
@@ -525,18 +565,14 @@
         "B08201_002E": { source: "ACS", agg: "sum", fmt: "int" },
         "B17001_002E": { source: "ACS", agg: "sum", fmt: "int" },
 
-        // ACS non-additive (approx)
         "B19013_001E": { source: "ACS", agg: "avg", fmt: "usd" },
         "B25064_001E": { source: "ACS", agg: "avg", fmt: "usd" },
         "B25077_001E": { source: "ACS", agg: "avg", fmt: "usd" },
 
-        // LODES employment
         "LODES_WAC_C000": { source: "LODES", agg: "sum", fmt: "int" }
       };
 
-      function getMeta(code) {
-        return VAR_META[code] || { source: "ACS", agg: "sum", fmt: "int" };
-      }
+      function getMeta(code) { return VAR_META[code] || { source: "ACS", agg: "sum", fmt: "int" }; }
 
       function setAggUI(meta) {
         const aggMethodEl = document.getElementById("aggMethod");
@@ -572,7 +608,7 @@
       }
 
       // ----------------------------
-      // FTA Small Starts Land Use breakpoints (table on your provided page)
+      // FTA Small Starts Land Use breakpoints
       // ----------------------------
       const BP = {
         popDensity: [
@@ -590,7 +626,7 @@
           { label: "Low",         pill: "low",  min: -Infinity, max: 39999 }
         ],
         lbarRatio: [
-          { label: "High",        pill: "high", min: 2.5000000001, max: Infinity }, // strictly > 2.50
+          { label: "High",        pill: "high", min: 2.5000000001, max: Infinity }, // > 2.50
           { label: "Medium-High", pill: "mh",   min: 2.25, max: 2.49 },
           { label: "Medium",      pill: "med",  min: 1.50, max: 2.24 },
           { label: "Medium-Low",  pill: "ml",   min: 1.10, max: 1.49 },
@@ -604,7 +640,7 @@
           { label: "Low",         pill: "low",  min: -Infinity, max: 4.99 }
         ],
         essentialAvg: [
-          { label: "High",        pill: "high", min: 7.0000000001, max: Infinity }, // strictly > 7
+          { label: "High",        pill: "high", min: 7.0000000001, max: Infinity }, // > 7
           { label: "Medium-High", pill: "mh",   min: 5.0, max: 7.0 },
           { label: "Medium",      pill: "med",  min: 3.0, max: 4.0 },
           { label: "Medium-Low",  pill: "ml",   min: 1.0, max: 2.0 },
@@ -666,10 +702,6 @@
 
       // ----------------------------
       // TIGERweb fetch for tracts / block groups / blocks
-      // Tracts_Blocks MapServer:
-      //   0 = Census Tracts
-      //   1 = Census Block Groups
-      //   2 = 2020 Census Blocks
       // ----------------------------
       async function fetchTigerwebGeos(geoLevel, unionFeat) {
         const bbox = bboxStringFromFeature(unionFeat);
@@ -761,7 +793,6 @@
       }
 
       async function fetchACSCountyValues(year, varCode, countyFipsList) {
-        // countyFipsList: array of 5-digit "ssccc"
         const base = `https://api.census.gov/data/${year}/acs/acs5`;
         const byState = new Map();
 
@@ -774,7 +805,6 @@
 
         const out = new Map(); // c5 -> value
         for (const [st, counties] of byState.entries()) {
-          // Fetch all counties in state then filter (ACS API doesn't support a list in "for=county:")
           const url = `${base}?get=NAME,${encodeURIComponent(varCode)}&for=county:*&in=state:${st}`;
           const resp = await fetch(url);
           if (!resp.ok) throw new Error(`ACS county fetch failed ${resp.status} for state ${st}`);
@@ -790,7 +820,7 @@
             if (!counties.includes(co)) continue;
             const val = Number(r[idxVar]);
             if (!Number.isFinite(val)) continue;
-            out.set(`${st}${co}`, val);
+            out.set(`${r[idxState]}${co}`, val);
           }
         }
         return out;
@@ -840,56 +870,224 @@
       }
 
       // ----------------------------
-      // CSV parsing helpers (simple; assumes no embedded commas/quotes)
-      // ----------------------------
-      function parseCSVSimple(text) {
-        const lines = text.split(/\r?\n/).filter(l => l.trim().length > 0);
-        if (lines.length < 2) return { headers: [], rows: [] };
-        const headers = lines[0].split(",").map(h => h.trim());
-        const rows = [];
-        for (let i = 1; i < lines.length; i++) {
-          const parts = lines[i].split(",");
-          const obj = {};
-          for (let j = 0; j < headers.length; j++) obj[headers[j]] = (parts[j] ?? "").trim();
-          rows.push(obj);
-        }
-        return { headers, rows };
-      }
-
-      function fillSelect(selectEl, options, placeholder = "Select…") {
-        selectEl.innerHTML = "";
-        const opt0 = document.createElement("option");
-        opt0.value = "";
-        opt0.textContent = placeholder;
-        selectEl.appendChild(opt0);
-        for (const o of options) {
-          const opt = document.createElement("option");
-          opt.value = o;
-          opt.textContent = o;
-          selectEl.appendChild(opt);
-        }
-      }
-
-      function enableSelect(selectEl, enabled) {
-        selectEl.disabled = !enabled;
-      }
-
-      // ----------------------------
       // Upload state: CRE, Essential Services, LBAR
       // ----------------------------
-      let CRE_MAP = null; // Map(tractGEOID -> { total, high })
+      let CRE_MAP = null; // Map(tractGEOID11 -> { total, high })
       let CRE_HEADERS = [];
       let CRE_ROWS = [];
 
       let ESS_POINTS = null; // array of [lon,lat]
-      let ESS_IS_GEOJSON = false;
       let ESS_HEADERS = [];
       let ESS_ROWS = [];
 
       let LBAR_SITES = null; // array {lon,lat,units,county5?}
-      let LBAR_IS_GEOJSON = false;
       let LBAR_HEADERS = [];
       let LBAR_ROWS = [];
+
+      function guessHeader(headers, candidates) {
+        const lower = new Map(headers.map(h => [h.toLowerCase(), h]));
+        for (const c of candidates) {
+          const v = lower.get(c.toLowerCase());
+          if (v) return v;
+        }
+        return "";
+      }
+
+      // CRE builder
+      function buildCreMapFromRows(geoidCol, totalCol, highCol) {
+        const m = new Map();
+        for (const r of CRE_ROWS) {
+          const geoid11 = normalizeTractGEOID(r[geoidCol]);
+          if (!geoid11) continue;
+          const total = toNumberSafe(r[totalCol]);
+          const high = toNumberSafe(r[highCol]);
+          if (!Number.isFinite(total) || !Number.isFinite(high)) continue;
+          m.set(geoid11, { total, high });
+        }
+        return m;
+      }
+
+      async function computeCommunityRiskFromCre() {
+        const unionFeat = bufferUnionPolygon();
+        if (!unionFeat || !CRE_MAP) return { pct: NaN, highInUnion: 0, totalInUnion: 0, used: 0 };
+
+        const tracts = await fetchTigerwebGeos("tract", unionFeat);
+        let highSum = 0;
+        let totalSum = 0;
+        let used = 0;
+
+        for (const t of tracts) {
+          const geoid = t.properties && t.properties.GEOID;
+          if (!geoid) continue;
+          const v = CRE_MAP.get(geoid);
+          if (!v) continue;
+
+          const inter = turf.intersect(t, unionFeat);
+          if (!inter) continue;
+
+          const aInter = turf.area(inter);
+          const aTract = turf.area(t);
+          if (aTract <= 0) continue;
+          const frac = Math.min(1, Math.max(0, aInter / aTract));
+
+          highSum += v.high * frac;
+          totalSum += v.total * frac;
+          used++;
+        }
+
+        const pct = totalSum > 0 ? (highSum / totalSum) * 100 : NaN;
+        return { pct, highInUnion: highSum, totalInUnion: totalSum, used };
+      }
+
+      // Essential services
+      function extractPointsFromGeoJSON(obj) {
+        const pts = [];
+        if (!obj || obj.type !== "FeatureCollection" || !Array.isArray(obj.features)) return pts;
+        for (const f of obj.features) {
+          if (!f || !f.geometry) continue;
+          if (f.geometry.type === "Point" && Array.isArray(f.geometry.coordinates) && f.geometry.coordinates.length >= 2) {
+            const lon = Number(f.geometry.coordinates[0]);
+            const lat = Number(f.geometry.coordinates[1]);
+            if (Number.isFinite(lon) && Number.isFinite(lat)) pts.push([lon, lat]);
+          }
+        }
+        return pts;
+      }
+
+      function buildPointsFromCsvRows(rows, latCol, lonCol) {
+        const pts = [];
+        for (const r of rows) {
+          const lat = toNumberSafe(r[latCol]);
+          const lon = toNumberSafe(r[lonCol]);
+          if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+          pts.push([lon, lat]);
+        }
+        return pts;
+      }
+
+      function computeEssentialServicesAvg() {
+        if (!ESS_POINTS || ESS_POINTS.length === 0 || points.length === 0) return { avg: NaN, perStation: [] };
+
+        const perStation = [];
+        for (const p of points) {
+          const [lon, lat] = p.geometry.coordinates;
+          const buf = turf.circle(turf.point([lon, lat]), 1.0, { units: "miles", steps: 64 });
+          let count = 0;
+          for (const q of ESS_POINTS) {
+            if (turf.booleanPointInPolygon(turf.point(q), buf)) count++;
+          }
+          perStation.push(count);
+        }
+        const avg = perStation.reduce((a, b) => a + b, 0) / perStation.length;
+        return { avg, perStation };
+      }
+
+      // LBAR
+      function buildLbarSitesFromGeoJSON(obj) {
+        const sites = [];
+        if (!obj || obj.type !== "FeatureCollection" || !Array.isArray(obj.features)) return sites;
+        for (const f of obj.features) {
+          if (!f || !f.geometry || f.geometry.type !== "Point") continue;
+          const c = f.geometry.coordinates;
+          if (!Array.isArray(c) || c.length < 2) continue;
+          const lon = Number(c[0]);
+          const lat = Number(c[1]);
+          if (!Number.isFinite(lon) || !Number.isFinite(lat)) continue;
+
+          const p = f.properties || {};
+          const units = toNumberSafe(p.units ?? p.UNITS ?? p.lbar_units ?? p.LBAR_UNITS);
+          if (!Number.isFinite(units)) continue;
+
+          const county = String(p.county ?? p.COUNTY ?? p.county_fips ?? p.COUNTY_FIPS ?? "").trim();
+          const county5 = county.replace(/\D/g, "").slice(0, 5);
+          sites.push({ lon, lat, units, county5: county5 || null });
+        }
+        return sites;
+      }
+
+      function buildLbarSitesFromCsvRows(rows, latCol, lonCol, unitsCol, countyCol) {
+        const sites = [];
+        for (const r of rows) {
+          const lat = toNumberSafe(r[latCol]);
+          const lon = toNumberSafe(r[lonCol]);
+          const units = toNumberSafe(r[unitsCol]);
+          if (!Number.isFinite(lat) || !Number.isFinite(lon) || !Number.isFinite(units)) continue;
+
+          let county5 = null;
+          if (countyCol) {
+            const raw = String(r[countyCol] ?? "").trim();
+            const digits = raw.replace(/\D/g, "");
+            if (digits.length >= 5) county5 = digits.slice(0, 5);
+          }
+          sites.push({ lon, lat, units, county5 });
+        }
+        return sites;
+      }
+
+      function parseCountyListInput() {
+        const raw = document.getElementById("lbarCounties").value || "";
+        const parts = raw.split(/[\s,;]+/).map(x => x.trim()).filter(Boolean);
+        const cleaned = parts.map(x => x.replace(/\D/g, "")).filter(x => x.length === 5);
+        return Array.from(new Set(cleaned));
+      }
+
+      async function computeLbarRatio() {
+        const unionFeat = bufferUnionPolygon();
+        if (!unionFeat || !LBAR_SITES || LBAR_SITES.length === 0) {
+          return { ratio: NaN, shareStation: NaN, shareCounty: NaN, note: "LBAR inventory not loaded." };
+        }
+
+        const year = document.getElementById("yearSelect").value;
+        const geoLevel = document.getElementById("geoLevel").value;
+
+        // LBAR units in station union
+        let lbarStation = 0;
+        for (const s of LBAR_SITES) {
+          if (turf.booleanPointInPolygon(turf.point([s.lon, s.lat]), unionFeat)) {
+            lbarStation += s.units;
+          }
+        }
+
+        // Total housing units in station union
+        const huStationRes = await computeAcsValueOnly("B25001_001E", year, geoLevel);
+        const huStation = huStationRes.value;
+        const shareStation = (Number.isFinite(huStation) && huStation > 0) ? (lbarStation / huStation) : NaN;
+
+        // County share inputs
+        const counties = parseCountyListInput();
+        if (counties.length === 0) {
+          return { ratio: NaN, shareStation, shareCounty: NaN, note: "Enter project counties (5-digit FIPS) to compute county share." };
+        }
+
+        const sitesWithCounty = LBAR_SITES.filter(s => s.county5 && s.county5.length === 5);
+        if (sitesWithCounty.length === 0) {
+          return { ratio: NaN, shareStation, shareCounty: NaN, note: "LBAR inventory missing county FIPS per site; cannot compute county share." };
+        }
+
+        let lbarCounty = 0;
+        for (const s of sitesWithCounty) {
+          if (counties.includes(s.county5)) lbarCounty += s.units;
+        }
+
+        const huCountyMap = await fetchACSCountyValues(year, "B25001_001E", counties);
+        let huCounty = 0;
+        let huFound = 0;
+        for (const c5 of counties) {
+          const v = huCountyMap.get(c5);
+          if (v != null) { huCounty += v; huFound++; }
+        }
+
+        const shareCounty = (huFound > 0 && huCounty > 0) ? (lbarCounty / huCounty) : NaN;
+        const ratio = (Number.isFinite(shareStation) && Number.isFinite(shareCounty) && shareCounty > 0)
+          ? (shareStation / shareCounty)
+          : NaN;
+
+        const note = Number.isFinite(shareCounty)
+          ? `LBAR county share=${(shareCounty*100).toFixed(2)}% (${huFound}/${counties.length} counties found in ACS)`
+          : "County share unavailable.";
+
+        return { ratio, shareStation, shareCounty, note };
+      }
 
       // ----------------------------
       // LODES: download + upload parsing + employment served computation
@@ -980,7 +1178,7 @@
           const g = parts[idxGeo];
           const c = parts[idxC000];
           if (!g || c === undefined) continue;
-          const v = Number(c);
+          const v = Number(String(c).replace(/,/g, "").trim());
           if (!Number.isFinite(v)) continue;
           jobsMap.set(String(g), v);
         }
@@ -1039,219 +1237,6 @@
       }
 
       // ----------------------------
-      // Upload computations: CRE, Essential, LBAR
-      // ----------------------------
-      function buildCreMapFromRows(geoidCol, totalCol, highCol) {
-        const m = new Map();
-        for (const r of CRE_ROWS) {
-          const geoid = (r[geoidCol] || "").trim();
-          if (!geoid) continue;
-          const total = Number(r[totalCol]);
-          const high = Number(r[highCol]);
-          if (!Number.isFinite(total) || !Number.isFinite(high)) continue;
-          // Expect 11-digit tract GEOID; accept longer by trimming to first 11 if needed
-          const g11 = geoid.length >= 11 ? geoid.slice(0, 11) : geoid;
-          m.set(g11, { total, high });
-        }
-        return m;
-      }
-
-      async function computeCommunityRiskFromCre() {
-        // Needs: CRE_MAP + station union + TIGERweb tracts
-        const unionFeat = bufferUnionPolygon();
-        if (!unionFeat || !CRE_MAP) return { pct: NaN, highInUnion: 0, totalInUnion: 0, used: 0 };
-
-        const tracts = await fetchTigerwebGeos("tract", unionFeat);
-
-        let highSum = 0;
-        let totalSum = 0;
-        let used = 0;
-
-        for (const t of tracts) {
-          const geoid = t.properties && t.properties.GEOID;
-          if (!geoid) continue;
-          const v = CRE_MAP.get(geoid);
-          if (!v) continue;
-
-          const inter = turf.intersect(t, unionFeat);
-          if (!inter) continue;
-
-          const aInter = turf.area(inter);
-          const aTract = turf.area(t);
-          if (aTract <= 0) continue;
-          const frac = Math.min(1, Math.max(0, aInter / aTract));
-
-          highSum += v.high * frac;
-          totalSum += v.total * frac;
-          used++;
-        }
-
-        const pct = totalSum > 0 ? (highSum / totalSum) * 100 : NaN;
-        return { pct, highInUnion: highSum, totalInUnion: totalSum, used };
-      }
-
-      function extractPointsFromGeoJSON(obj) {
-        const pts = [];
-        if (!obj || obj.type !== "FeatureCollection" || !Array.isArray(obj.features)) return pts;
-        for (const f of obj.features) {
-          if (!f || !f.geometry) continue;
-          const g = f.geometry;
-          if (g.type === "Point" && Array.isArray(g.coordinates) && g.coordinates.length >= 2) {
-            const lon = Number(g.coordinates[0]);
-            const lat = Number(g.coordinates[1]);
-            if (Number.isFinite(lon) && Number.isFinite(lat)) pts.push([lon, lat]);
-          }
-        }
-        return pts;
-      }
-
-      function buildPointsFromCsvRows(rows, latCol, lonCol) {
-        const pts = [];
-        for (const r of rows) {
-          const lat = Number(r[latCol]);
-          const lon = Number(r[lonCol]);
-          if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
-          pts.push([lon, lat]);
-        }
-        return pts;
-      }
-
-      function buildLbarSitesFromGeoJSON(obj) {
-        // Expect points with properties.units and optionally properties.county (5-digit)
-        const sites = [];
-        if (!obj || obj.type !== "FeatureCollection" || !Array.isArray(obj.features)) return sites;
-        for (const f of obj.features) {
-          if (!f || !f.geometry || f.geometry.type !== "Point") continue;
-          const c = f.geometry.coordinates;
-          if (!Array.isArray(c) || c.length < 2) continue;
-          const lon = Number(c[0]);
-          const lat = Number(c[1]);
-          if (!Number.isFinite(lon) || !Number.isFinite(lat)) continue;
-
-          const p = f.properties || {};
-          const units = Number(p.units ?? p.UNITS ?? p.lbar_units ?? p.LBAR_UNITS);
-          if (!Number.isFinite(units)) continue;
-
-          const county = String(p.county ?? p.COUNTY ?? p.county_fips ?? p.COUNTY_FIPS ?? "").trim();
-          const county5 = county.length >= 5 ? county.slice(0, 5) : county;
-
-          sites.push({ lon, lat, units, county5: county5 || null });
-        }
-        return sites;
-      }
-
-      function buildLbarSitesFromCsvRows(rows, latCol, lonCol, unitsCol, countyCol) {
-        const sites = [];
-        for (const r of rows) {
-          const lat = Number(r[latCol]);
-          const lon = Number(r[lonCol]);
-          const units = Number(r[unitsCol]);
-          if (!Number.isFinite(lat) || !Number.isFinite(lon) || !Number.isFinite(units)) continue;
-
-          let county5 = null;
-          if (countyCol) {
-            const raw = String(r[countyCol] ?? "").trim();
-            if (raw) county5 = raw.length >= 5 ? raw.slice(0, 5) : raw;
-          }
-          sites.push({ lon, lat, units, county5 });
-        }
-        return sites;
-      }
-
-      function parseCountyListInput() {
-        const raw = document.getElementById("lbarCounties").value || "";
-        const parts = raw.split(/[\s,;]+/).map(x => x.trim()).filter(Boolean);
-        const cleaned = parts.map(x => x.replace(/\D/g, "")).filter(x => x.length === 5);
-        // Unique
-        return Array.from(new Set(cleaned));
-      }
-
-      async function computeLbarRatio() {
-        // Station area share: LBAR units within union / HU within union
-        // County share: LBAR units within listed counties / HU within listed counties
-        // Ratio: share_station / share_county
-        // Boost: if share_county > 5%, bump 1 level.
-
-        const unionFeat = bufferUnionPolygon();
-        if (!unionFeat || !LBAR_SITES || LBAR_SITES.length === 0) {
-          return { ratio: NaN, shareStation: NaN, shareCounty: NaN, note: "LBAR inventory not loaded." };
-        }
-
-        const year = document.getElementById("yearSelect").value;
-        const geoLevel = document.getElementById("geoLevel").value;
-
-        // 1) LBAR in station union
-        let lbarStation = 0;
-        for (const s of LBAR_SITES) {
-          if (turf.booleanPointInPolygon(turf.point([s.lon, s.lat]), unionFeat)) {
-            lbarStation += s.units;
-          }
-        }
-
-        // 2) Total housing units in station union (ACS B25001_001E)
-        const huStationRes = await computeAcsValueOnly("B25001_001E", year, geoLevel);
-        const huStation = huStationRes.value;
-
-        const shareStation = (Number.isFinite(huStation) && huStation > 0) ? (lbarStation / huStation) : NaN;
-
-        // 3) County share
-        const counties = parseCountyListInput();
-        if (counties.length === 0) {
-          return { ratio: NaN, shareStation, shareCounty: NaN, note: "Enter project counties (5-digit FIPS) to compute county share." };
-        }
-
-        // Need county field on sites to sum LBAR_county
-        const sitesWithCounty = LBAR_SITES.filter(s => s.county5 && s.county5.length === 5);
-        if (sitesWithCounty.length === 0) {
-          return { ratio: NaN, shareStation, shareCounty: NaN, note: "LBAR inventory missing county FIPS per site; cannot compute county share." };
-        }
-
-        let lbarCounty = 0;
-        for (const s of sitesWithCounty) {
-          if (counties.includes(s.county5)) lbarCounty += s.units;
-        }
-
-        // Total housing units in project counties
-        const huCountyMap = await fetchACSCountyValues(year, "B25001_001E", counties);
-        let huCounty = 0;
-        let huFound = 0;
-        for (const c5 of counties) {
-          const v = huCountyMap.get(c5);
-          if (v != null) { huCounty += v; huFound++; }
-        }
-
-        const shareCounty = (huFound > 0 && huCounty > 0) ? (lbarCounty / huCounty) : NaN;
-
-        const ratio = (Number.isFinite(shareStation) && Number.isFinite(shareCounty) && shareCounty > 0)
-          ? (shareStation / shareCounty)
-          : NaN;
-
-        const note = (Number.isFinite(shareCounty))
-          ? `LBAR county share=${(shareCounty*100).toFixed(2)}% (${huFound}/${counties.length} counties found in ACS)`
-          : "County share unavailable.";
-
-        return { ratio, shareStation, shareCounty, note };
-      }
-
-      function computeEssentialServicesAvg() {
-        // Avg count of essential points within 1 mile of each station point
-        if (!ESS_POINTS || ESS_POINTS.length === 0 || points.length === 0) return { avg: NaN, perStation: [] };
-
-        const perStation = [];
-        for (const p of points) {
-          const [lon, lat] = p.geometry.coordinates;
-          const buf = turf.circle(turf.point([lon, lat]), 1.0, { units: "miles", steps: 64 });
-          let count = 0;
-          for (const q of ESS_POINTS) {
-            if (turf.booleanPointInPolygon(turf.point(q), buf)) count++;
-          }
-          perStation.push(count);
-        }
-        const avg = perStation.reduce((a, b) => a + b, 0) / perStation.length;
-        return { avg, perStation };
-      }
-
-      // ----------------------------
       // Breakpoint ratings updater
       // ----------------------------
       async function updateBreakpointRatings() {
@@ -1281,19 +1266,22 @@
         try {
           setStatus("Computing breakpoint ratings…");
 
-          // --- Population density ---
+          // Population density
           const SQM_PER_SQMI = 2589988.110336;
           const areaSqMi = turf.area(unionFeat) / SQM_PER_SQMI;
           const popRes = await computeAcsValueOnly("B01003_001E", year, geoLevel);
           const popTotal = popRes.value;
-          const popDensity = (Number.isFinite(popTotal) && Number.isFinite(areaSqMi) && areaSqMi > 0) ? (popTotal / areaSqMi) : NaN;
+          const popDensity = (Number.isFinite(popTotal) && Number.isFinite(areaSqMi) && areaSqMi > 0)
+            ? (popTotal / areaSqMi) : NaN;
+
           document.getElementById("bpPopValue").textContent = Number.isFinite(popDensity)
             ? `${Math.round(popDensity).toLocaleString()} persons/sq mile`
             : "—";
+
           const popClass = classify(popDensity, BP.popDensity);
           setPill("bpPopPill", popClass.label, popClass.pill);
 
-          // --- Employment served ---
+          // Employment served
           if (LODES_UPLOADED) {
             const empRes = await computeEmploymentServedOnly();
             const emp = empRes.value;
@@ -1302,7 +1290,7 @@
             setPill("bpEmpPill", empClass.label, empClass.pill);
           }
 
-          // --- Community Risk (CRE) ---
+          // Community Risk
           if (CRE_MAP) {
             const cre = await computeCommunityRiskFromCre();
             const pct = cre.pct;
@@ -1312,29 +1300,29 @@
             document.getElementById("bpCreNote").textContent = `Used ${cre.used} intersecting tracts (area-apportioned).`;
           }
 
-          // --- Essential services ---
+          // Essential services
           if (ESS_POINTS && ESS_POINTS.length > 0 && points.length > 0) {
             const ess = computeEssentialServicesAvg();
             document.getElementById("bpEssValue").textContent = Number.isFinite(ess.avg) ? ess.avg.toFixed(2) : "—";
             const essClass = classify(ess.avg, BP.essentialAvg);
             setPill("bpEssPill", essClass.label, essClass.pill);
-            document.getElementById("bpEssNote").textContent = `1-mile buffers; ${points.length} stations; ${ESS_POINTS.length} service points loaded.`;
+            document.getElementById("bpEssNote").textContent =
+              `1-mile buffers; ${points.length} stations; ${ESS_POINTS.length} service points loaded.`;
           }
 
-          // --- LBAR ratio ---
+          // LBAR ratio + boost
           if (LBAR_SITES && LBAR_SITES.length > 0) {
             const lbar = await computeLbarRatio();
             document.getElementById("bpLbarNote").textContent = lbar.note || "";
+
             if (Number.isFinite(lbar.ratio)) {
               document.getElementById("bpLbarValue").textContent =
                 `${lbar.ratio.toFixed(2)} (station share ${(lbar.shareStation*100).toFixed(2)}% / county share ${(lbar.shareCounty*100).toFixed(2)}%)`;
 
               let cls = classify(lbar.ratio, BP.lbarRatio);
 
-              // Boost rule: if county share > 5%, bump one level (capped at High)
               if (Number.isFinite(lbar.shareCounty) && lbar.shareCounty > 0.05) {
                 const bumpedLabel = bumpOneLevel(cls.label);
-                // Re-map pill class based on bumped label
                 const pillMap = { "Low":"low", "Medium-Low":"ml", "Medium":"med", "Medium-High":"mh", "High":"high" };
                 cls = { label: bumpedLabel, pill: pillMap[bumpedLabel] || cls.pill };
                 document.getElementById("bpLbarNote").textContent += " | Boost applied (county share > 5%).";
@@ -1344,7 +1332,6 @@
             }
           }
         } catch (e) {
-          // Leave whatever computed; do not hard-fail the UI
           console.error(e);
         } finally {
           setStatus("Ready");
@@ -1352,7 +1339,7 @@
       }
 
       // ----------------------------
-      // Main summary runner
+      // Main summary runners
       // ----------------------------
       async function runLodesEmploymentSummary(year) {
         const notesEl = document.getElementById("notes");
@@ -1460,7 +1447,7 @@
       }
 
       // ----------------------------
-      // Init UI + events
+      // Init UI + event bindings
       // ----------------------------
       map.on("load", () => {
         setStatus("Ready");
@@ -1506,9 +1493,7 @@
           }
         });
 
-        // LBAR counties change should re-rate
         document.getElementById("lbarCounties").addEventListener("input", () => {
-          // Debounce not necessary for short input
           updateBreakpointRatings();
         });
 
@@ -1558,7 +1543,7 @@
         });
 
         // ----------------------------
-        // CRE upload
+        // CRE upload (robust CSV)
         // ----------------------------
         document.getElementById("creFile").addEventListener("change", async (e) => {
           const file = e.target.files && e.target.files[0];
@@ -1567,7 +1552,7 @@
           try {
             setStatus("Loading CRE CSV…");
             const text = await file.text();
-            const parsed = parseCSVSimple(text);
+            const parsed = parseCSV(text);
 
             CRE_HEADERS = parsed.headers;
             CRE_ROWS = parsed.rows;
@@ -1584,11 +1569,10 @@
             enableSelect(sT, true);
             enableSelect(sH, true);
 
-            // Heuristic defaults
-            const guess = (cands) => CRE_HEADERS.find(h => cands.some(x => h.toLowerCase() === x)) || "";
-            sG.value = guess(["geoid", "geoid10", "tract_geoid", "tract"]);
-            sT.value = guess(["total", "total_pop", "population", "totpop", "pop"]);
-            sH.value = guess(["high_risk", "highrisk", "high_risk_pop", "risk3plus", "highrisk_pop"]);
+            // Defaults for CRE_23_Tract.csv typical fields
+            sG.value = guessHeader(CRE_HEADERS, ["GEO_ID", "geoid", "GEOID"]);
+            sT.value = guessHeader(CRE_HEADERS, ["POPUNI", "total", "TOT_POP", "population"]);
+            sH.value = guessHeader(CRE_HEADERS, ["PRED3_E", "HIGH_RISK", "high_risk", "risk3plus"]);
 
             function rebuildCre() {
               if (!sG.value || !sT.value || !sH.value) {
@@ -1598,14 +1582,26 @@
                 return;
               }
               CRE_MAP = buildCreMapFromRows(sG.value, sT.value, sH.value);
+
+              const sampleRaw = CRE_ROWS.length ? CRE_ROWS[0][sG.value] : "";
+              const sampleNorm = normalizeTractGEOID(sampleRaw);
+
               document.getElementById("creInfo").textContent =
-                `Loaded ${file.name}: ${CRE_MAP.size.toLocaleString()} tract rows mapped.`;
+                `Loaded ${file.name}: ${CRE_MAP.size.toLocaleString()} tracts mapped. ` +
+                (sampleRaw ? `Sample GEOID: "${sampleRaw}" -> "${sampleNorm}"` : "");
+
+              if (CRE_MAP.size === 0 && CRE_ROWS.length > 0) {
+                document.getElementById("creInfo").textContent +=
+                  " | If this remains 0, confirm GEO_ID contains tract IDs ending in 11 digits and selected columns are numeric.";
+              }
+
               updateBreakpointRatings();
             }
 
-            sG.addEventListener("change", rebuildCre);
-            sT.addEventListener("change", rebuildCre);
-            sH.addEventListener("change", rebuildCre);
+            // Avoid stacking listeners if user uploads multiple times
+            sG.onchange = rebuildCre;
+            sT.onchange = rebuildCre;
+            sH.onchange = rebuildCre;
 
             rebuildCre();
             setStatus("Ready");
@@ -1620,7 +1616,7 @@
         });
 
         // ----------------------------
-        // Essential services upload
+        // Essential services upload (GeoJSON or robust CSV)
         // ----------------------------
         document.getElementById("essFile").addEventListener("change", async (e) => {
           const file = e.target.files && e.target.files[0];
@@ -1631,7 +1627,6 @@
             const name = file.name.toLowerCase();
 
             ESS_POINTS = null;
-            ESS_IS_GEOJSON = false;
             ESS_HEADERS = [];
             ESS_ROWS = [];
 
@@ -1641,19 +1636,18 @@
             if (name.endsWith(".json") || name.endsWith(".geojson")) {
               const text = await file.text();
               const obj = JSON.parse(text);
-              const pts = extractPointsFromGeoJSON(obj);
-              ESS_POINTS = pts;
-              ESS_IS_GEOJSON = true;
+              ESS_POINTS = extractPointsFromGeoJSON(obj);
 
               fillSelect(latSel, [], "N/A (GeoJSON)");
               fillSelect(lonSel, [], "N/A (GeoJSON)");
               enableSelect(latSel, false);
               enableSelect(lonSel, false);
 
-              document.getElementById("essInfo").textContent = `Loaded ${file.name}: ${pts.length.toLocaleString()} points.`;
+              document.getElementById("essInfo").textContent =
+                `Loaded ${file.name}: ${ESS_POINTS.length.toLocaleString()} points.`;
             } else if (name.endsWith(".csv")) {
               const text = await file.text();
-              const parsed = parseCSVSimple(text);
+              const parsed = parseCSV(text);
               ESS_HEADERS = parsed.headers;
               ESS_ROWS = parsed.rows;
 
@@ -1662,9 +1656,8 @@
               enableSelect(latSel, true);
               enableSelect(lonSel, true);
 
-              const guess = (cands) => ESS_HEADERS.find(h => cands.some(x => h.toLowerCase() === x)) || "";
-              latSel.value = guess(["lat", "latitude", "y"]);
-              lonSel.value = guess(["lon", "longitude", "lng", "x"]);
+              latSel.value = guessHeader(ESS_HEADERS, ["lat", "latitude", "y", "LAT", "Latitude"]);
+              lonSel.value = guessHeader(ESS_HEADERS, ["lon", "lng", "longitude", "x", "LON", "Longitude"]);
 
               function rebuildEss() {
                 if (!latSel.value || !lonSel.value) {
@@ -1679,8 +1672,9 @@
                 updateBreakpointRatings();
               }
 
-              latSel.addEventListener("change", rebuildEss);
-              lonSel.addEventListener("change", rebuildEss);
+              latSel.onchange = rebuildEss;
+              lonSel.onchange = rebuildEss;
+
               rebuildEss();
             } else {
               throw new Error("Unsupported file type. Upload .geojson/.json or .csv.");
@@ -1697,7 +1691,7 @@
         });
 
         // ----------------------------
-        // LBAR upload
+        // LBAR upload (GeoJSON or robust CSV)
         // ----------------------------
         document.getElementById("lbarFile").addEventListener("change", async (e) => {
           const file = e.target.files && e.target.files[0];
@@ -1708,7 +1702,6 @@
             const name = file.name.toLowerCase();
 
             LBAR_SITES = null;
-            LBAR_IS_GEOJSON = false;
             LBAR_HEADERS = [];
             LBAR_ROWS = [];
 
@@ -1720,9 +1713,7 @@
             if (name.endsWith(".json") || name.endsWith(".geojson")) {
               const text = await file.text();
               const obj = JSON.parse(text);
-              const sites = buildLbarSitesFromGeoJSON(obj);
-              LBAR_SITES = sites;
-              LBAR_IS_GEOJSON = true;
+              LBAR_SITES = buildLbarSitesFromGeoJSON(obj);
 
               fillSelect(latSel, [], "N/A (GeoJSON)");
               fillSelect(lonSel, [], "N/A (GeoJSON)");
@@ -1734,11 +1725,11 @@
               enableSelect(ctySel, false);
 
               document.getElementById("lbarInfo").textContent =
-                `Loaded ${file.name}: ${sites.length.toLocaleString()} sites (expects properties.units and optional properties.county).`;
+                `Loaded ${file.name}: ${LBAR_SITES.length.toLocaleString()} sites (expects properties.units and optional properties.county).`;
               updateBreakpointRatings();
             } else if (name.endsWith(".csv")) {
               const text = await file.text();
-              const parsed = parseCSVSimple(text);
+              const parsed = parseCSV(text);
               LBAR_HEADERS = parsed.headers;
               LBAR_ROWS = parsed.rows;
 
@@ -1752,16 +1743,16 @@
               enableSelect(uniSel, true);
               enableSelect(ctySel, true);
 
-              const guess = (cands) => LBAR_HEADERS.find(h => cands.some(x => h.toLowerCase() === x)) || "";
-              latSel.value = guess(["lat", "latitude", "y"]);
-              lonSel.value = guess(["lon", "longitude", "lng", "x"]);
-              uniSel.value = guess(["units", "lbar_units", "units_total", "count"]);
-              ctySel.value = guess(["county", "county_fips", "fips", "countyfp"]);
+              latSel.value = guessHeader(LBAR_HEADERS, ["lat", "latitude", "y", "LAT", "Latitude"]);
+              lonSel.value = guessHeader(LBAR_HEADERS, ["lon", "lng", "longitude", "x", "LON", "Longitude"]);
+              uniSel.value = guessHeader(LBAR_HEADERS, ["units", "lbar_units", "LBAR_UNITS", "UNITS"]);
+              ctySel.value = guessHeader(LBAR_HEADERS, ["county_fips", "county", "COUNTY", "COUNTY_FIPS", "FIPS"]);
 
               function rebuildLbar() {
                 if (!latSel.value || !lonSel.value || !uniSel.value) {
                   LBAR_SITES = null;
-                  document.getElementById("lbarInfo").textContent = "Select required columns (lat/lon/units) to enable LBAR computations.";
+                  document.getElementById("lbarInfo").textContent =
+                    "Select required columns (lat/lon/units) to enable LBAR computations.";
                   updateBreakpointRatings();
                   return;
                 }
@@ -1775,10 +1766,11 @@
                 updateBreakpointRatings();
               }
 
-              latSel.addEventListener("change", rebuildLbar);
-              lonSel.addEventListener("change", rebuildLbar);
-              uniSel.addEventListener("change", rebuildLbar);
-              ctySel.addEventListener("change", rebuildLbar);
+              latSel.onchange = rebuildLbar;
+              lonSel.onchange = rebuildLbar;
+              uniSel.onchange = rebuildLbar;
+              ctySel.onchange = rebuildLbar;
+
               rebuildLbar();
             } else {
               throw new Error("Unsupported file type. Upload .geojson/.json or .csv.");
