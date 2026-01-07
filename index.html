@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>Casey's CIG tool prototype</title>
+    <title>MapLibre Stations + Buffers + ACS + LODES + CRE + Essential Services + LBAR (FTA Breakpoint Ratings)</title>
 
     <!-- MapLibre GL JS -->
     <link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
@@ -351,6 +351,11 @@
             <input id="lbarCounties" type="text" placeholder="e.g., 06075,06081" />
           </label>
 
+          <label style="display:flex;align-items:center;gap:10px;margin-top:10px;">
+            <input id="toggleLbarLayer" type="checkbox" style="width:auto;margin:0;" />
+            Show LBAR points on map
+          </label>
+
           <div class="tiny" id="lbarInfo">No file loaded.</div>
         </div>
 
@@ -552,6 +557,62 @@
       }
 
       function bboxStringFromFeature(feat) { return turf.bbox(feat).join(","); }
+
+      // ----------------------------
+      // LBAR plotting (toggle)
+      // ----------------------------
+      function lbarSitesToGeoJSON() {
+        const feats = (LBAR_SITES || []).map((s, i) => ({
+          type: "Feature",
+          properties: { idx: i + 1 },
+          geometry: { type: "Point", coordinates: [s.lon, s.lat] }
+        }));
+        return { type: "FeatureCollection", features: feats };
+      }
+
+      function ensureLbarLayer() {
+        const srcId = "lbar-sites";
+        const layerId = "lbar-sites-layer";
+        const data = lbarSitesToGeoJSON();
+
+        if (!map.getSource(srcId)) {
+          map.addSource(srcId, { type: "geojson", data });
+          map.addLayer({
+            id: layerId,
+            type: "circle",
+            source: srcId,
+            paint: {
+              "circle-radius": 3,
+              "circle-color": "#333333",
+              "circle-opacity": 0.85
+            }
+          });
+        } else {
+          map.getSource(srcId).setData(data);
+        }
+      }
+
+      function removeLbarLayer() {
+        const srcId = "lbar-sites";
+        const layerId = "lbar-sites-layer";
+        if (map.getLayer(layerId)) map.removeLayer(layerId);
+        if (map.getSource(srcId)) map.removeSource(srcId);
+      }
+
+      function refreshLbarLayerVisibility() {
+        const cb = document.getElementById("toggleLbarLayer");
+        const on = cb && cb.checked;
+
+        if (!on) {
+          removeLbarLayer();
+          return;
+        }
+        if (!LBAR_SITES || LBAR_SITES.length === 0) {
+          removeLbarLayer();
+          return;
+        }
+        ensureLbarLayer();
+      }
 
       // ----------------------------
       // Variable metadata (main summary)
@@ -1453,6 +1514,11 @@
         setStatus("Ready");
         renderStationLayers();
 
+        // LBAR layer toggle
+        document.getElementById("toggleLbarLayer").addEventListener("change", () => {
+          refreshLbarLayerVisibility();
+        });
+
         setAggUI(getMeta(document.getElementById("varSelect").value));
         document.getElementById("varSelect").addEventListener("change", (e) => {
           setAggUI(getMeta(e.target.value));
@@ -1472,6 +1538,8 @@
           document.getElementById("notes").textContent = "";
           setStatus("Cleared");
           updateBreakpointRatings();
+          // keep layer consistent
+          refreshLbarLayerVisibility();
         });
 
         document.getElementById("undo").addEventListener("click", () => {
@@ -1598,7 +1666,6 @@
               updateBreakpointRatings();
             }
 
-            // Avoid stacking listeners if user uploads multiple times
             sG.onchange = rebuildCre;
             sT.onchange = rebuildCre;
             sH.onchange = rebuildCre;
@@ -1691,7 +1758,7 @@
         });
 
         // ----------------------------
-        // LBAR upload (GeoJSON or robust CSV)
+        // LBAR upload (GeoJSON or robust CSV) + map plotting toggle
         // ----------------------------
         document.getElementById("lbarFile").addEventListener("change", async (e) => {
           const file = e.target.files && e.target.files[0];
@@ -1726,6 +1793,8 @@
 
               document.getElementById("lbarInfo").textContent =
                 `Loaded ${file.name}: ${LBAR_SITES.length.toLocaleString()} sites (expects properties.units and optional properties.county).`;
+
+              refreshLbarLayerVisibility();
               updateBreakpointRatings();
             } else if (name.endsWith(".csv")) {
               const text = await file.text();
@@ -1745,7 +1814,7 @@
 
               latSel.value = guessHeader(LBAR_HEADERS, ["lat", "latitude", "y", "LAT", "Latitude"]);
               lonSel.value = guessHeader(LBAR_HEADERS, ["lon", "lng", "longitude", "x", "LON", "Longitude"]);
-              uniSel.value = guessHeader(LBAR_HEADERS, ["units", "lbar_units", "LBAR_UNITS", "UNITS"]);
+              uniSel.value = guessHeader(LBAR_HEADERS, ["units", "lbar_units", "LBAR_UNITS", "UNITS", "Total Low-Income Units"]);
               ctySel.value = guessHeader(LBAR_HEADERS, ["county_fips", "county", "COUNTY", "COUNTY_FIPS", "FIPS"]);
 
               function rebuildLbar() {
@@ -1753,6 +1822,7 @@
                   LBAR_SITES = null;
                   document.getElementById("lbarInfo").textContent =
                     "Select required columns (lat/lon/units) to enable LBAR computations.";
+                  refreshLbarLayerVisibility();
                   updateBreakpointRatings();
                   return;
                 }
@@ -1763,6 +1833,7 @@
                 document.getElementById("lbarInfo").textContent =
                   `Loaded ${file.name}: ${LBAR_SITES.length.toLocaleString()} sites. County FIPS present: ${hasCounty ? "Yes" : "No"}.`;
 
+                refreshLbarLayerVisibility();
                 updateBreakpointRatings();
               }
 
@@ -1781,6 +1852,7 @@
             LBAR_SITES = null;
             document.getElementById("lbarInfo").textContent = `Error: ${String(err && err.message ? err.message : err)}`;
             setStatus("Error");
+            refreshLbarLayerVisibility();
             updateBreakpointRatings();
           }
         });
